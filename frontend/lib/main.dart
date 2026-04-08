@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:ui'; 
 
 void main() {
   runApp(const BitirmeProjesiApp());
@@ -15,10 +16,7 @@ class BitirmeProjesiApp extends StatelessWidget {
       title: 'Ortak Karar Çöpçatanı',
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFFF4B2B),
-          brightness: Brightness.light,
-        ),
+        brightness: Brightness.dark, 
         fontFamily: 'Roboto',
       ),
       home: const AnaSayfa(),
@@ -34,9 +32,9 @@ class KullaniciGirdisi {
   bool araciVarMi;
 
   KullaniciGirdisi(String ad, String konum, String tercih, this.araciVarMi)
-    : adController = TextEditingController(text: ad),
-      konumController = TextEditingController(text: konum),
-      tercihController = TextEditingController(text: tercih);
+      : adController = TextEditingController(text: ad),
+        konumController = TextEditingController(text: konum),
+        tercihController = TextEditingController(text: tercih);
 }
 
 class AnaSayfa extends StatefulWidget {
@@ -49,63 +47,22 @@ class AnaSayfa extends StatefulWidget {
 class _AnaSayfaState extends State<AnaSayfa> {
   String _mekanAdi = "";
   String _puan = "";
-  String _sebep =
-      "Grup üyelerinin konumlarını ve canlarının ne çektiğini girin! ✨";
+  String _kisaOzet = ""; 
+  String _sebep = "";
   bool _yukleniyor = false;
 
-  // YENİ YAPI: İlçeler ve içlerindeki Mahalle/Caddeler (Sözlük Formatı)
   final Map<String, List<String>> _ankaraKonumlari = {
-    'Çankaya': [
-      '7. Cadde (Bahçelievler)',
-      'Anıttepe',
-      'Arjantin Caddesi',
-      'Ayrancı',
-      'Bahçelievler',
-      'Balgat',
-      'Beşevler',
-      'Bilkent',
-      'Birlik Mahallesi',
-      'Cebeci',
-      'Çayyolu',
-      'Çukurambar',
-      'Demirtepe',
-      'Dikmen Vadisi',
-      'Emek',
-      'Filistin Caddesi',
-      'Gaziosmanpaşa (GOP)',
-      'Kavaklıdere',
-      'Kızılay',
-      'Konutkent',
-      'Kurtuluş',
-      'Mutluköy',
-      'Oran',
-      'Öveçler',
-      'Sancak',
-      'Söğütözü',
-      'Tunalı Hilmi',
-      'Tunus Caddesi',
-      'Ümitköy',
-      'Yaşamkent',
-      'Yıldız',
-      '100. Yıl (İşçi Blokları)',
-    ],
-    'Yenimahalle': [
-      'Batıkent Meydan',
-      'Demetevler',
-      'Ostim',
-      'Şentepe',
-      'Gazi Mahallesi',
-    ],
+    'Çankaya': ['7. Cadde (Bahçelievler)', 'Anıttepe', 'Arjantin Caddesi', 'Ayrancı', 'Bahçelievler', 'Balgat', 'Beşevler', 'Bilkent', 'Birlik Mahallesi', 'Cebeci', 'Çayyolu', 'Çukurambar', 'Demirtepe', 'Dikmen Vadisi', 'Emek', 'Filistin Caddesi', 'Gaziosmanpaşa (GOP)', 'Kavaklıdere', 'Kızılay', 'Konutkent', 'Kurtuluş', 'Mutluköy', 'Oran', 'Öveçler', 'Sancak', 'Söğütözü', 'Tunalı Hilmi', 'Tunus Caddesi', 'Ümitköy', 'Yaşamkent', 'Yıldız', '100. Yıl (İşçi Blokları)'],
+    'Yenimahalle': ['Batıkent Meydan', 'Demetevler', 'Ostim', 'Şentepe', 'Gazi Mahallesi'],
     'Keçiören': ['Basınevleri', 'Etlik', 'İncirli', 'Aktepe', 'Subayevleri'],
     'Etimesgut': ['Eryaman', 'Elvankent', 'Bağlıca', 'Göksu'],
     'Mamak': ['Kusunlar', 'Abidinpaşa', 'Akdere', 'Boğaziçi', 'Natoyolu'],
     'Altındağ': ['Ulus', 'Siteler', 'Hasköy', 'Hamamönü'],
     'Gölbaşı': ['İncek', 'Mogan', 'Eymir', 'Kızılcaşar'],
     'Pursaklar': ['Merkez', 'Saray'],
-    'Sincan': ['Merkez', 'Fatih', 'Yenikent', 'Törekent'],
+    'Sincan': ['Merkez', 'Fatih', 'Yenikent', 'Törekent']
   };
 
-  // Başlangıç değerlerini yeni formata uygun şekilde güncelledik
   final List<KullaniciGirdisi> _kullanicilar = [
     KullaniciGirdisi("Ahmet", "Etimesgut / Eryaman", "Suşi", false),
     KullaniciGirdisi("Mehmet", "Çankaya / Çayyolu", "Çıtır Tavuk", true),
@@ -117,8 +74,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
       _yukleniyor = true;
       _mekanAdi = "";
       _puan = "";
-      _sebep =
-          "Yapay zeka sokaklardaki en otantik lezzet noktalarını tarıyor... 🔍";
+      _kisaOzet = "";
+      _sebep = "";
     });
 
     try {
@@ -143,12 +100,12 @@ class _AnaSayfaState extends State<AnaSayfa> {
           setState(() {
             _mekanAdi = data['mekan_adi'] ?? "";
             _puan = data['puan']?.toString() ?? "";
+            _kisaOzet = data['kisa_ozet'] ?? "";
             _sebep = data['sebep'] ?? "Sebep belirtilmedi.";
           });
         } else {
           setState(() {
             _mekanAdi = "Sistem Hatası 🤖";
-            _puan = "";
             _sebep = data['message'] ?? "Bilinmeyen bir hata.";
           });
         }
@@ -162,333 +119,327 @@ class _AnaSayfaState extends State<AnaSayfa> {
     }
   }
 
+  void _sifirla() {
+    setState(() {
+      _mekanAdi = "";
+      _puan = "";
+      _kisaOzet = "";
+      _sebep = "";
+    });
+  }
+
+  // YENİ: Çift yıldızları algılayıp kalın yazdıran akıllı fonksiyon
+  Widget _buildRichText(String text) {
+    final List<TextSpan> spans = [];
+    final List<String> parts = text.split('**');
+
+    for (int i = 0; i < parts.length; i++) {
+      if (i % 2 == 0) {
+        // Çift indeksler normal yazıdır
+        spans.add(TextSpan(text: parts[i]));
+      } else {
+        // Tek indeksler iki yıldız arasında kalan kalın yazıdır
+        spans.add(TextSpan(
+          text: parts[i], 
+          style: const TextStyle(fontWeight: FontWeight.w900) // Kalınlığı iyice artırdık
+        ));
+      }
+    }
+
+    return RichText(
+      textAlign: TextAlign.center,
+      text: TextSpan(
+        style: const TextStyle(fontSize: 15, height: 1.5, color: Colors.black87, fontFamily: 'Roboto'),
+        children: spans,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFFFF416C), Color(0xFFFF4B2B)],
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(32.0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 4,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        "🔥 Ekip Toplanıyor",
+      backgroundColor: Colors.black, 
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 430, maxHeight: 932),
+          child: Stack(
+            children: [
+              Container(
+                color: const Color(0xFF262626), 
+                child: Column(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.only(top: 60, bottom: 20),
+                      child: const Text(
+                        "Ortayı Bul",
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 32,
                           fontWeight: FontWeight.w900,
                           color: Colors.white,
-                          letterSpacing: 1.2,
+                          letterSpacing: 1.5,
                         ),
                       ),
-                      const SizedBox(height: 20),
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount: _kullanicilar.length,
-                          itemBuilder: (context, index) {
-                            return Container(
-                              margin: const EdgeInsets.only(bottom: 16),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.95),
-                                borderRadius: BorderRadius.circular(24),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.1),
-                                    blurRadius: 15,
-                                    offset: const Offset(0, 8),
-                                  ),
-                                ],
-                              ),
-                              padding: const EdgeInsets.all(20.0),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  CircleAvatar(
-                                    radius: 30,
-                                    backgroundColor: Colors
-                                        .primaries[index %
-                                            Colors.primaries.length]
-                                        .shade100,
-                                    child: Text(
-                                      _kullanicilar[index]
-                                              .adController
-                                              .text
-                                              .isNotEmpty
-                                          ? _kullanicilar[index]
-                                                .adController
-                                                .text[0]
-                                                .toUpperCase()
-                                          : "?",
-                                      style: TextStyle(
-                                        fontSize: 24,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors
-                                            .primaries[index %
-                                                Colors.primaries.length]
-                                            .shade800,
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                        itemCount: _kullanicilar.length,
+                        itemBuilder: (context, index) {
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 20),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF333333), 
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(color: Colors.white12),
+                            ),
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 2,
+                                      child: _buildDarkTextField(_kullanicilar[index].adController, "İsim", Icons.person),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      flex: 3,
+                                      child: _buildLocationAutoComplete(index),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 3,
+                                      child: _buildDarkTextField(_kullanicilar[index].tercihController, "Ne İstiyor?", Icons.fastfood),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      flex: 2,
+                                      child: GestureDetector(
+                                        onTap: () => setState(() => _kullanicilar[index].araciVarMi = !_kullanicilar[index].araciVarMi),
+                                        child: Container(
+                                          height: 50,
+                                          decoration: BoxDecoration(
+                                            color: _kullanicilar[index].araciVarMi ? const Color(0xFF4285F4).withOpacity(0.2) : Colors.black26,
+                                            borderRadius: BorderRadius.circular(16),
+                                            border: Border.all(color: _kullanicilar[index].araciVarMi ? const Color(0xFF4285F4) : Colors.transparent),
+                                          ),
+                                          child: Row(
+                                            mainAxisAlignment: MainAxisAlignment.center,
+                                            children: [
+                                              Icon(Icons.directions_car, size: 20, color: _kullanicilar[index].araciVarMi ? const Color(0xFF4285F4) : Colors.white54),
+                                              const SizedBox(width: 8),
+                                              Text("Araç", style: TextStyle(fontWeight: FontWeight.bold, color: _kullanicilar[index].araciVarMi ? const Color(0xFF4285F4) : Colors.white54)),
+                                            ],
+                                          ),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 20),
-                                  Expanded(
-                                    child: Column(
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: _buildSleekTextField(
-                                                _kullanicilar[index]
-                                                    .adController,
-                                                "İsim",
-                                                Icons.person_outline,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: _buildLocationAutoComplete(
-                                                index,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 12),
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              flex: 2,
-                                              child: _buildSleekTextField(
-                                                _kullanicilar[index]
-                                                    .tercihController,
-                                                "Ne İstiyor?",
-                                                Icons.fastfood_outlined,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 12),
-                                            Expanded(
-                                              child: Container(
-                                                decoration: BoxDecoration(
-                                                  color: Colors.white,
-                                                  borderRadius:
-                                                      BorderRadius.circular(16),
-                                                ),
-                                                child: CheckboxListTile(
-                                                  title: const Text(
-                                                    "Araç",
-                                                    style: TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.bold,
-                                                      fontSize: 14,
-                                                    ),
-                                                  ),
-                                                  value: _kullanicilar[index]
-                                                      .araciVarMi,
-                                                  activeColor: Colors.green,
-                                                  onChanged: (val) => setState(
-                                                    () =>
-                                                        _kullanicilar[index]
-                                                                .araciVarMi =
-                                                            val ?? false,
-                                                  ),
-                                                  contentPadding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 8,
-                                                      ),
-                                                  dense: true,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 40),
-                Expanded(
-                  flex: 3,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      SizedBox(
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: SizedBox(
                         width: double.infinity,
-                        height: 70,
+                        height: 65,
                         child: ElevatedButton(
                           onPressed: _yukleniyor ? null : _mekanOnerisiAl,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.black87,
+                            backgroundColor: const Color(0xFF4285F4),
                             foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            elevation: 5,
                           ),
-                          child: _yukleniyor
-                              ? const CircularProgressIndicator(
-                                  color: Colors.white,
-                                )
-                              : const Text(
-                                  "Krizi Çöz & Mekan Bul",
-                                  style: TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                        ),
-                      ),
-                      const SizedBox(height: 30),
-                      Expanded(
-                        child: Container(
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(32),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
-                                blurRadius: 30,
-                                offset: const Offset(0, 15),
-                              ),
-                            ],
-                          ),
-                          padding: const EdgeInsets.all(32),
-                          child: SelectionArea(
-                            child: _yukleniyor
-                                ? _buildLoadingState()
-                                : _buildResultState(),
+                          child: const Text(
+                            "Şaşırt Bizi!",
+                            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1.2),
                           ),
                         ),
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+
+              if (_yukleniyor)
+                Positioned.fill(
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                    child: Container(
+                      color: Colors.black.withOpacity(0.5),
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CircularProgressIndicator(color: Color(0xFF4285F4), strokeWidth: 5),
+                          SizedBox(height: 30),
+                          Text(
+                            "Şartlar düşünülerek\nen uygun seçim yapılıyor...",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w500, fontStyle: FontStyle.italic, height: 1.5),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-              ],
-            ),
+
+              if (_mekanAdi.isNotEmpty && !_yukleniyor)
+                Positioned.fill(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 80),
+                    padding: const EdgeInsets.all(24),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF0F0F0),
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(40)),
+                      boxShadow: [BoxShadow(color: Colors.black54, blurRadius: 20, offset: Offset(0, -10))],
+                    ),
+                    child: Column(
+                      children: [
+                        Container(width: 50, height: 6, decoration: BoxDecoration(color: Colors.grey.shade400, borderRadius: BorderRadius.circular(10))),
+                        const SizedBox(height: 20),
+                        // İKON BURADAN KALDIRILDI
+                        Expanded(
+                          child: SelectionArea(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center, 
+                              children: [
+                                if (_puan.isNotEmpty && _puan != "-")
+                                  Container(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(color: Colors.amber.shade100, borderRadius: BorderRadius.circular(6)),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(Icons.star_rounded, color: Colors.amber, size: 16),
+                                        const SizedBox(width: 4),
+                                        Text(_puan, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87)),
+                                      ],
+                                    ),
+                                  ),
+                                
+                                Text(
+                                  _mekanAdi,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.black87, height: 1.2),
+                                ),
+                                const SizedBox(height: 12),
+                                
+                                Text(
+                                  _kisaOzet.isNotEmpty ? _kisaOzet : "Sizin için en uygun lokasyon!",
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.blueGrey.shade700, fontStyle: FontStyle.italic),
+                                ),
+                                
+                                const SizedBox(height: 30), 
+                                
+                                Text(
+                                  "Detaylı Analiz",
+                                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.grey.shade500),
+                                ),
+                                const SizedBox(height: 8),
+                                
+                                Expanded(
+                                  child: SingleChildScrollView(
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(bottom: 20.0),
+                                      // BURASI GÜNCELLENDİ: Sadece _sebep yerine _buildRichText fonksiyonunu kullanıyoruz
+                                      child: _buildRichText(_sebep),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 60,
+                          child: OutlinedButton(
+                            onPressed: _sifirla,
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.black87,
+                              side: const BorderSide(color: Colors.black26, width: 2),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            ),
+                            child: const Text("Yeni Arama Yap", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  // YENİ ALGORİTMA: İlçe / Mahalle mantığıyla çalışan akıllı otomatik tamamlama
   Widget _buildLocationAutoComplete(int index) {
     return Autocomplete<String>(
-      initialValue: TextEditingValue(
-        text: _kullanicilar[index].konumController.text,
-      ),
+      initialValue: TextEditingValue(text: _kullanicilar[index].konumController.text),
       optionsBuilder: (TextEditingValue textEditingValue) {
         final String inputText = textEditingValue.text;
+        if (inputText.isEmpty) return _ankaraKonumlari.keys;
 
-        if (inputText.isEmpty) {
-          // Boşken tüm ilçeleri (Sözlüğün anahtarlarını) göster
-          return _ankaraKonumlari.keys;
-        }
-
-        // Eğer içinde " / " varsa, ilçeyi ayır ve o ilçenin mahallelerinde arama yap
         if (inputText.contains('/')) {
           final parts = inputText.split('/');
           final district = parts[0].trim();
-          final searchNeighborhood = parts.length > 1
-              ? parts[1].trimLeft().toLowerCase()
-              : '';
+          final searchNeighborhood = parts.length > 1 ? parts[1].trimLeft().toLowerCase() : '';
 
           if (_ankaraKonumlari.containsKey(district)) {
             final neighborhoods = _ankaraKonumlari[district]!;
             if (searchNeighborhood.isEmpty) {
               return neighborhoods.map((n) => '$district / $n');
             } else {
-              return neighborhoods
-                  .where((n) => n.toLowerCase().contains(searchNeighborhood))
-                  .map((n) => '$district / $n');
+              return neighborhoods.where((n) => n.toLowerCase().contains(searchNeighborhood)).map((n) => '$district / $n');
             }
           } else {
             return const Iterable<String>.empty();
           }
         } else {
-          // Henüz " / " yoksa, yazılan harfe göre ilçeleri (örn: Çankaya) filtrele
           final searchDistrict = inputText.trimLeft().toLowerCase();
-          return _ankaraKonumlari.keys.where(
-            (d) => d.toLowerCase().contains(searchDistrict),
-          );
+          return _ankaraKonumlari.keys.where((d) => d.toLowerCase().contains(searchDistrict));
         }
       },
       onSelected: (String selection) {
-        // Eğer kullanıcı sadece ilçeyi seçtiyse (içinde / yoksa), yanına " / " koyarak beklet
         if (!selection.contains('/')) {
           _kullanicilar[index].konumController.text = '$selection / ';
         } else {
-          // Kullanıcı tam adresi seçtiyse aynen kaydet
           _kullanicilar[index].konumController.text = selection;
         }
       },
       fieldViewBuilder: (ctx, ctrl, fNode, onComplete) {
-        ctrl.addListener(() {
-          // TextField içeriği değiştikçe arka plandaki modelimizi güncelliyoruz
-          _kullanicilar[index].konumController.text = ctrl.text;
-        });
-
-        return TextField(
-          controller: ctrl,
-          focusNode: fNode,
-          decoration: InputDecoration(
-            labelText: "İlçe / Mahalle",
-            hintText: "Örn: Çankaya / Tunalı",
-            prefixIcon: const Icon(Icons.location_on_outlined, size: 20),
-            filled: true,
-            fillColor: Colors.grey.shade100,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-              borderSide: BorderSide.none,
-            ),
-          ),
-        );
+        ctrl.addListener(() => _kullanicilar[index].konumController.text = ctrl.text);
+        return _buildDarkTextField(ctrl, "Semt", Icons.location_on, focusNode: fNode);
       },
       optionsViewBuilder: (ctx, onSelected, opts) => Align(
         alignment: Alignment.topLeft,
         child: Material(
           color: Colors.transparent,
           child: Container(
-            width:
-                300, // Mahalle isimleri uzun olabileceği için genişliği artırdık
+            width: 250,
             margin: const EdgeInsets.only(top: 8),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10),
-              ],
-            ),
+            decoration: BoxDecoration(color: const Color(0xFF333333), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white12)),
             child: ListView.builder(
               padding: EdgeInsets.zero,
               shrinkWrap: true,
               itemCount: opts.length,
               itemBuilder: (ctx, i) => ListTile(
-                title: Text(
-                  opts.elementAt(i),
-                  style: const TextStyle(fontWeight: FontWeight.w500),
-                ),
-                onTap: () {
-                  onSelected(opts.elementAt(i));
-                  // Seçimden sonra klavyenin açık kalması / odaklanması isteniyorsa burada ekstra işlemler yapılabilir
-                },
+                title: Text(opts.elementAt(i), style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.white)), 
+                onTap: () => onSelected(opts.elementAt(i))
               ),
             ),
           ),
@@ -497,74 +448,23 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  Widget _buildSleekTextField(
-    TextEditingController ctrl,
-    String lbl,
-    IconData icon,
-  ) {
-    return TextField(
-      controller: ctrl,
-      decoration: InputDecoration(
-        labelText: lbl,
-        prefixIcon: Icon(icon, size: 20),
-        filled: true,
-        fillColor: Colors.grey.shade100,
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide.none,
+  Widget _buildDarkTextField(TextEditingController ctrl, String lbl, IconData icon, {FocusNode? focusNode}) {
+    return SizedBox(
+      height: 50,
+      child: TextField(
+        controller: ctrl,
+        focusNode: focusNode,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+        decoration: InputDecoration(
+          hintText: lbl,
+          hintStyle: const TextStyle(color: Colors.white54, fontSize: 14),
+          prefixIcon: Icon(icon, size: 20, color: Colors.white54),
+          filled: true,
+          fillColor: Colors.black26,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
         ),
       ),
     );
   }
-
-  Widget _buildLoadingState() => Column(
-    mainAxisAlignment: MainAxisAlignment.center,
-    children: [
-      const Icon(Icons.travel_explore, size: 80, color: Color(0xFFFF4B2B)),
-      const SizedBox(height: 24),
-      Text(
-        _sebep,
-        textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 18, fontStyle: FontStyle.italic),
-      ),
-    ],
-  );
-
-  Widget _buildResultState() => SingleChildScrollView(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        if (_mekanAdi.isNotEmpty) ...[
-          const Icon(Icons.location_on, size: 60, color: Color(0xFFFF4B2B)),
-          const Text(
-            "🎉 ORTAK NOKTA BULUNDU!",
-            style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
-          ),
-          Text(
-            _mekanAdi,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
-          ),
-          if (_puan.isNotEmpty && _puan != "-")
-            Chip(
-              label: Text(_puan),
-              avatar: const Icon(Icons.star, color: Colors.amber),
-            ),
-          const Divider(height: 40),
-        ],
-        Text(
-          _mekanAdi.isNotEmpty
-              ? "Yapay Zeka Neden Burayı Seçti?"
-              : "Analiz Bekleniyor",
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 16),
-        Text(
-          _sebep,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 17, height: 1.5),
-        ),
-      ],
-    ),
-  );
 }
