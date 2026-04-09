@@ -1,0 +1,17 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ShouldAI (Web)",
+      "request": "launch",
+      "type": "dart",
+      // KLASÖR YAPINA GÖRE BURAYI KONTROL ET:
+      "program": "frontend/lib/main.dart", 
+      "args": [
+        "-d", "chrome",
+        "--web-browser-flag", "--disable-web-security"
+      ],
+      "preLaunchTask": "Start Python Backend"
+    }
+  ]
+}

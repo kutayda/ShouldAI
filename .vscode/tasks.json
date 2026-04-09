@@ -1,0 +1,25 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Python Backend",
+      "type": "shell",
+      "command": "python -m uvicorn main:app --reload",
+      "options": {
+        "cwd": "${workspaceFolder}/backend"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "python",
+        "pattern": {
+          "regexp": "^.*$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*Will watch for changes in these directories.*",
+          "endsPattern": ".*Application startup complete.*"
+        }
+      }
+    }
+  ]
+}
