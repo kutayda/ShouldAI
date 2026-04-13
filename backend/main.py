@@ -1,18 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from google import genai
-from google.genai import types as genai_types 
-import json
 import os
-import time
 import requests
 from dotenv import load_dotenv
 
 # .env dosyasını zorla bulmasını sağlıyoruz
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
-
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI(title="ShouldAI API")
 
@@ -30,51 +24,56 @@ class SingleUserRequest(BaseModel):
     current_lat: float = None
     current_lng: float = None
 
-# --- 1. TEKLİ ÖNERİ SİSTEMİ (DÜZELTİLDİ) ---
+# --- 1. TEKLİ ÖNERİ SİSTEMİ (SUNUM İÇİN DUMMY VERİ) ---
 @app.post("/api/single_recommendation")
 def get_single_recommendation(request: SingleUserRequest):
-    # Promptu biraz daha netleştirdik
-    prompt = f"""
-    Sen Ankara'da bir yerel rehbersin. 
-    Kullanıcı Koordinatı: [{request.current_lat}, {request.current_lng}]
-    İsteği: {request.preference} ({request.time_limit_mins} dakika mesafede olmalı)
-    
-    Görev: Ankara sokaklarını analiz et ve bu koordinata yakın en iyi mekanı bul.
-    Mekanın gerçek koordinatlarını (lat, lng) tam ver.
-    Yanıtı SADECE bu JSON formatında döndür:
-    {{
-      "status": "success",
-      "mekan_adi": "Mekan Adı", 
-      "puan": "4.9", 
-      "lat": 39.9, 
-      "lng": 32.8,
-      "kisa_ozet": "Özet metin.", 
-      "sebep": "Neden burası seçildi?"
-    }}
-    """
-    
-    # Hatalara karşı 3 deneme mekanizması
-    for deneme in range(3):
-        try:
-            response = client.models.generate_content(
-                model='gemini-2.0-flash', # DOĞRU MODEL ADI BUDUR
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(response_mime_type="application/json"),
-            )
-            # Dönen cevabı temizce alalım
-            ai_data = json.loads(response.text)
-            print(f"✅ Öneri Başarılı: {ai_data.get('mekan_adi')}")
-            return ai_data
-            
-        except Exception as e:
-            # HATA DEDEKTİFİ: Terminale hatayı basar ki ne olduğunu anlayalım
-            print(f"💥 AI DENEME {deneme+1} HATASI: {e}")
-            if deneme < 2:
-                time.sleep(3) # 3 saniye bekle ve tekrar dene
-                continue
-            return {"status": "error", "message": f"Yapay zeka hatası: {str(e)}"}
+    # Kullanıcının girdisini küçük harfe çeviriyoruz (Büyük/Küçük harf duyarsız)
+    pref = request.preference.lower()
 
-# --- 2. NAVİGASYON VE ADRES SORGULAMA ---
+    # DUMMY VERİ MANTIĞI
+    if "hamburger" in pref:
+        return {
+            "status": "success",
+            "mekan_adi": "Burger King - Maltepe",
+            "puan": "4.2",
+            "lat": 39.9272,
+            "lng": 32.8465,
+            "kisa_ozet": "Hızlı ve doyurucu bir hamburger menüsü.",
+            "sebep": "Canın hamburger çektiği için bölgedeki en hızlı ve bilindik seçenek."
+        }
+    elif "kebap" in pref:
+        return {
+            "status": "success",
+            "mekan_adi": "Düveroğlu - Maltepe",
+            "puan": "4.8",
+            "lat": 39.9275,
+            "lng": 32.8440,
+            "kisa_ozet": "Ankara'nın en meşhur kebapçılarından biri.",
+            "sebep": "Kaliteli et ve lezzetli mezeler aradığın için en doğru adres."
+        }
+    elif "döner" in pref:
+        return {
+            "status": "success",
+            "mekan_adi": "Hatayca - Kızılay",
+            "puan": "4.5",
+            "lat": 39.9212,
+            "lng": 32.8540,
+            "kisa_ozet": "Bol soslu Antakya usulü dürüm döner.",
+            "sebep": "Soslu döner krizine Kızılay'daki en iyi çözüm burası."
+        }
+    else:
+        # Eğer bu üçü dışında bir şey yazılırsa joker bir mekan dönsün (Hata vermesin)
+        return {
+            "status": "success",
+            "mekan_adi": "Gülçimen Aspava - Emek",
+            "puan": "4.7",
+            "lat": 39.9165,
+            "lng": 32.8220,
+            "kisa_ozet": "Ankara'nın vazgeçilmez Aspava kültürü.",
+            "sebep": "Ne yiyeceğine tam karar veremediğin için ikramı bol garantili bir yer."
+        }
+
+# --- 2. NAVİGASYON VE ADRES SORGULAMA (GERÇEK ÇALIŞIYOR) ---
 @app.get("/api/get_route")
 def get_route(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float):
     route_url = f"http://router.project-osrm.org/route/v1/driving/{origin_lng},{origin_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson"
@@ -85,7 +84,6 @@ def get_route(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: f
         route_res = requests.get(route_url).json()
         addr_res = requests.get(address_url, headers=headers).json()
         
-        # Adres ayıklama
         address_full = addr_res.get("display_name", "Bilinmeyen Adres")
         address_parts = address_full.split(",")
         address_text = ", ".join(address_parts[0:2]) if len(address_parts) > 1 else address_full

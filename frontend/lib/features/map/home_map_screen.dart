@@ -140,7 +140,6 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     }
   }
 
-  // --- ÖNERİ ALMA ÖZELLİĞİ (DÜZELTİLDİ) ---
   void _tekliOneriDialogAc() {
     setState(() => _haritaKilitli = true);
     TextEditingController tercihCtrl = TextEditingController();
@@ -163,7 +162,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
               TextField(
                 controller: tercihCtrl,
                 decoration: InputDecoration(
-                  labelText: "Ne istersin?",
+                  labelText: "Ne istersin? (Hamburger, Kebap, Döner...)",
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(15),
                   ),
@@ -204,7 +203,6 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   }
 
   Future<void> _hizliOneriCek(String tercih, int dakika) async {
-    // Yükleme dairesi göster
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -226,18 +224,33 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
       );
 
       if (!mounted) return;
-      Navigator.pop(context); // Loading'i kapat
+      Navigator.pop(context);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
+
+        if (data['status'] == 'error') {
+          setState(() => _haritaKilitli = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(data['message'] ?? "Hata"),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+
         if (data['status'] == 'success') {
           final LatLng mekanPos = LatLng(data['lat'], data['lng']);
 
           setState(() {
-            _markers.removeWhere((m) => m.markerId.value == 'onerilen_mekan');
+            _secilenHedef = mekanPos; // YENİ: Otomatik olarak adresi de bulsun
+            _markers.removeWhere((m) => m.markerId.value == 'hedef_pin');
             _markers.add(
               Marker(
-                markerId: const MarkerId('onerilen_mekan'),
+                markerId: const MarkerId(
+                  'hedef_pin',
+                ), // Onerilen mekan yerine direkt hedef pin yaptık
                 position: mekanPos,
                 icon: BitmapDescriptor.defaultMarkerWithHue(
                   BitmapDescriptor.hueRed,
@@ -250,8 +263,11 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
             );
           });
 
+          // OSRM rotasını ve adresini otomatik çeksin
+          _hedefSec(mekanPos);
+
           mapController.animateCamera(
-            CameraUpdate.newLatLngZoom(mekanPos, 16.0),
+            CameraUpdate.newLatLngZoom(mekanPos, 14.0),
           );
           _oneriSonucunuGoster(data);
         }
@@ -259,6 +275,12 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     } catch (e) {
       if (mounted) Navigator.pop(context);
       setState(() => _haritaKilitli = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Sunucu Hatası!"),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -286,12 +308,24 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text("Anladım"),
+              child: const Text("Navigasyona Geç"),
             ),
           ],
         ),
       ),
     ).then((_) => setState(() => _haritaKilitli = false));
+  }
+
+  // --- UI BUG ÇÖZÜCÜ (KURŞUN GEÇİRMEZ KALKAN) ---
+  // Bu fonksiyon içine konan hiçbir UI elementinin arkasına tıklanmasına izin vermez.
+  Widget _kalkanTasarimi({required Widget child}) {
+    return Listener(
+      onPointerDown: (_) {}, // Farenin basma anını emer
+      onPointerMove: (_) {}, // Fare hareketini emer
+      onPointerUp: (_) {}, // Fareyi bırakma anını emer
+      behavior: HitTestBehavior.opaque, // Arkadaki haritayı tamamen sağır eder
+      child: child,
+    );
   }
 
   @override
@@ -323,9 +357,9 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
             if (kalkanAktif)
               Positioned.fill(
-                child: GestureDetector(
+                child: Listener(
                   behavior: HitTestBehavior.opaque,
-                  onTap: () {
+                  onPointerDown: (_) {
                     if (!_navigasyonPanelAcik) {
                       setState(() {
                         _secilenHedef = null;
@@ -341,232 +375,252 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                 ),
               ),
 
+            // ÜST ARAMA BARI (KALKANLI)
             Positioned(
               top: 50,
               left: 20,
               right: 20,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      height: 55,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(30),
-                        boxShadow: [
-                          BoxShadow(color: Colors.black12, blurRadius: 15),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.menu),
-                            onPressed: () =>
-                                _scaffoldKey.currentState?.openDrawer(),
-                          ),
-                          const Expanded(
-                            child: Text(
-                              "Nereye gidiyoruz?",
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          ),
-                          const Icon(Icons.search, color: Colors.grey),
-                          const SizedBox(width: 15),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 15),
-                  const CircleAvatar(
-                    backgroundColor: Colors.blueAccent,
-                    radius: 27,
-                    child: Icon(Icons.person, color: Colors.white),
-                  ),
-                ],
-              ),
-            ),
-
-            if (_secilenHedef != null && !_navigasyonPanelAcik)
-              Positioned(
-                bottom: 220,
-                left: 20,
-                right: 20,
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(22),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.2),
-                        blurRadius: 25,
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _hedefAdresi,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: 17,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        "Mesafe: $_mesafeText | Süre: $_sureText",
-                        style: TextStyle(
-                          color: Colors.blueGrey.shade400,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: ElevatedButton.icon(
-                          onPressed: () =>
-                              setState(() => _navigasyonPanelAcik = true),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueAccent,
-                            foregroundColor: Colors.white,
-                            elevation: 5,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          icon: const Icon(Icons.navigation_rounded),
-                          label: const Text(
-                            "GİT",
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 400),
-              curve: Curves.fastOutSlowIn,
-              bottom: _navigasyonPanelAcik ? 0 : -screenHeight * 0.35,
-              left: 0,
-              right: 0,
-              child: Container(
-                height: screenHeight * 0.33,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF141414),
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(35)),
-                  boxShadow: [BoxShadow(color: Colors.black87, blurRadius: 40)],
-                ),
-                child: Column(
+              child: _kalkanTasarimi(
+                child: Row(
                   children: [
-                    const SizedBox(height: 12),
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 35),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _navInfoCol(
-                          "KALAN SÜRE",
-                          _sureText,
-                          Colors.greenAccent,
+                    Expanded(
+                      child: Container(
+                        height: 55,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black12, blurRadius: 15),
+                          ],
                         ),
-                        _navInfoCol("TOPLAM MESAFE", _mesafeText, Colors.white),
-                      ],
-                    ),
-                    const Spacer(),
-                    Padding(
-                      padding: const EdgeInsets.all(28.0),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 58,
-                        child: OutlinedButton(
-                          onPressed: () => setState(() {
-                            _navigasyonPanelAcik = false;
-                            _polylines.clear();
-                            _secilenHedef = null;
-                          }),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(
-                              color: Colors.redAccent,
-                              width: 2,
+                        child: Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.menu),
+                              onPressed: () =>
+                                  _scaffoldKey.currentState?.openDrawer(),
                             ),
-                            foregroundColor: Colors.redAccent,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
+                            const Expanded(
+                              child: Text(
+                                "Nereye gidiyoruz?",
+                                style: TextStyle(color: Colors.grey),
+                              ),
                             ),
-                          ),
-                          child: const Text(
-                            "NAVİGASYONU BİTİR",
-                            style: TextStyle(
-                              fontWeight: FontWeight.w900,
-                              fontSize: 15,
-                            ),
-                          ),
+                            const Icon(Icons.search, color: Colors.grey),
+                            const SizedBox(width: 15),
+                          ],
                         ),
                       ),
+                    ),
+                    const SizedBox(width: 15),
+                    const CircleAvatar(
+                      backgroundColor: Colors.blueAccent,
+                      radius: 27,
+                      child: Icon(Icons.person, color: Colors.white),
                     ),
                   ],
                 ),
               ),
             ),
 
+            // SEÇİLEN YER BİLGİ KUTUSU (KALKANLI)
+            if (_secilenHedef != null && !_navigasyonPanelAcik)
+              Positioned(
+                bottom: 220,
+                left: 20,
+                right: 20,
+                child: _kalkanTasarimi(
+                  child: Container(
+                    padding: const EdgeInsets.all(18),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(22),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.2),
+                          blurRadius: 25,
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _hedefAdresi,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 17,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          "Mesafe: $_mesafeText | Süre: $_sureText",
+                          style: TextStyle(
+                            color: Colors.blueGrey.shade400,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: ElevatedButton.icon(
+                            onPressed: () =>
+                                setState(() => _navigasyonPanelAcik = true),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blueAccent,
+                              foregroundColor: Colors.white,
+                              elevation: 5,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            icon: const Icon(Icons.navigation_rounded),
+                            label: const Text(
+                              "GİT",
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+            // NAVİGASYON PANELİ (KALKANLI)
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 400),
+              curve: Curves.fastOutSlowIn,
+              bottom: _navigasyonPanelAcik ? 0 : -screenHeight * 0.35,
+              left: 0,
+              right: 0,
+              child: _kalkanTasarimi(
+                child: Container(
+                  height: screenHeight * 0.33,
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF141414),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(35),
+                    ),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black87, blurRadius: 40),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 12),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      const SizedBox(height: 35),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _navInfoCol(
+                            "KALAN SÜRE",
+                            _sureText,
+                            Colors.greenAccent,
+                          ),
+                          _navInfoCol(
+                            "TOPLAM MESAFE",
+                            _mesafeText,
+                            Colors.white,
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      Padding(
+                        padding: const EdgeInsets.all(28.0),
+                        child: SizedBox(
+                          width: double.infinity,
+                          height: 58,
+                          child: OutlinedButton(
+                            onPressed: () => setState(() {
+                              _navigasyonPanelAcik = false;
+                              _polylines.clear();
+                              _secilenHedef = null;
+                            }),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(
+                                color: Colors.redAccent,
+                                width: 2,
+                              ),
+                              foregroundColor: Colors.redAccent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                            ),
+                            child: const Text(
+                              "NAVİGASYONU BİTİR",
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 15,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // SAĞ ALT AKSİYON BUTONLARI (KALKANLI)
             AnimatedPositioned(
               duration: const Duration(milliseconds: 400),
               curve: Curves.fastOutSlowIn,
               bottom: _navigasyonPanelAcik ? (screenHeight * 0.33 + 25) : 35,
               right: 20,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  FloatingActionButton.extended(
-                    heroTag: "f1",
-                    onPressed: _tekliOneriDialogAc,
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.blueAccent,
-                    label: const Text(
-                      "Öneri Al",
-                      style: TextStyle(fontWeight: FontWeight.bold),
+              child: _kalkanTasarimi(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    FloatingActionButton.extended(
+                      heroTag: "f1",
+                      onPressed: _tekliOneriDialogAc,
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.blueAccent,
+                      label: const Text(
+                        "Öneri Al",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      icon: const Icon(Icons.explore),
                     ),
-                    icon: const Icon(Icons.explore),
-                  ),
-                  const SizedBox(height: 12),
-                  FloatingActionButton.extended(
-                    heroTag: "f2",
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (c) => MutualChoiceScreen(
-                          currentLat: _myLat,
-                          currentLng: _myLng,
+                    const SizedBox(height: 12),
+                    FloatingActionButton.extended(
+                      heroTag: "f2",
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (c) => MutualChoiceScreen(
+                            currentLat: _myLat,
+                            currentLng: _myLng,
+                          ),
                         ),
                       ),
+                      backgroundColor: Colors.black87,
+                      foregroundColor: Colors.white,
+                      label: const Text(
+                        "Ekibi Topla",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      icon: const Icon(Icons.auto_awesome, color: Colors.amber),
                     ),
-                    backgroundColor: Colors.black87,
-                    foregroundColor: Colors.white,
-                    label: const Text(
-                      "Ekibi Topla",
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    icon: const Icon(Icons.auto_awesome, color: Colors.amber),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ],
