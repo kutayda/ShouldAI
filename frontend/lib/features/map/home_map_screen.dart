@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:ui' as ui;
+import 'package:pointer_interceptor/pointer_interceptor.dart';
 import '../groups/mutual_choice/mutual_choice_screen.dart';
 
 class HomeMapScreen extends StatefulWidget {
@@ -16,7 +17,7 @@ class HomeMapScreen extends StatefulWidget {
 
 class _HomeMapScreenState extends State<HomeMapScreen> {
   late GoogleMapController mapController;
-  LatLng _center = const LatLng(39.92077, 32.85411);
+  LatLng _center = const LatLng(39.92077, 32.85411); // Varsayılan: Ankara Kızılay
   double? _myLat;
   double? _myLng;
 
@@ -48,20 +49,14 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(pictureRecorder);
     const Offset center = Offset(size / 2, size / 2);
-    final Paint auraPaint = Paint()
-      ..color = Colors.blueAccent.withValues(alpha: 0.15);
+    final Paint auraPaint = Paint()..color = Colors.blueAccent.withValues(alpha: 0.15);
     canvas.drawCircle(center, size / 2, auraPaint);
     final Paint borderPaint = Paint()..color = Colors.white;
     canvas.drawCircle(center, 12, borderPaint);
     final Paint corePaint = Paint()..color = Colors.blueAccent;
     canvas.drawCircle(center, 8, corePaint);
-    final ui.Image image = await pictureRecorder.endRecording().toImage(
-      size.toInt(),
-      size.toInt(),
-    );
-    final ByteData? byteData = await image.toByteData(
-      format: ui.ImageByteFormat.png,
-    );
+    final ui.Image image = await pictureRecorder.endRecording().toImage(size.toInt(), size.toInt());
+    final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     if (byteData != null) {
       setState(() {
         _locationIcon = BitmapDescriptor.bytes(byteData.buffer.asUint8List());
@@ -74,11 +69,35 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   }
 
   Future<void> _suankiKonumaGit() async {
-    Position position = await Geolocator.getCurrentPosition();
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
+      );
+      setState(() {
+        _myLat = position.latitude;
+        _myLng = position.longitude;
+        _center = LatLng(position.latitude, position.longitude);
+      });
+    } catch (e) {
+      debugPrint("Konum alınamadı, yedek konum (Kızılay) kullanılıyor.");
+      setState(() {
+        _myLat = 39.92077;
+        _myLng = 32.85411;
+        _center = const LatLng(39.92077, 32.85411);
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Konum izni alınamadı, varsayılan konum kullanılıyor."),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+
     setState(() {
-      _myLat = position.latitude;
-      _myLng = position.longitude;
-      _center = LatLng(position.latitude, position.longitude);
       _markers.add(
         Marker(
           markerId: const MarkerId('my_location'),
@@ -89,57 +108,198 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
         ),
       );
     });
-    mapController.animateCamera(CameraUpdate.newLatLngZoom(_center, 15.0));
+    mapController.animateCamera(CameraUpdate.newLatLngZoom(_center, 14.0));
   }
 
-  void _hedefSec(LatLng secilenKonum) async {
+  // YENİ: Hem rotayı çizen hem de renkleri ayarlayabilen asenkron fonksiyon
+  Future<void> _hedefSec(LatLng secilenKonum, {double pinHue = BitmapDescriptor.hueAzure}) async {
     if (_navigasyonPanelAcik || _haritaKilitli) return;
-    if (_myLat == null) return;
 
+    // Önce eski rotaları ve eski yazıları tamamen temizle ki kafa karışmasın
     setState(() {
       _secilenHedef = secilenKonum;
-      _hedefAdresi = "Adres hesaplanıyor...";
+      _hedefAdresi = "Rota hesaplanıyor...";
+      _mesafeText = "..."; 
+      _sureText = "...";
       _polylines.clear();
       _markers.removeWhere((m) => m.markerId.value == 'hedef_pin');
       _markers.add(
         Marker(
           markerId: const MarkerId('hedef_pin'),
           position: secilenKonum,
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-            BitmapDescriptor.hueAzure,
-          ),
+          icon: BitmapDescriptor.defaultMarkerWithHue(pinHue),
         ),
       );
     });
 
+    if (_myLat == null || _myLng == null) {
+      setState(() {
+        _hedefAdresi = "Konumunuz bilinmediği için rota çizilemiyor.";
+        _mesafeText = "-";
+        _sureText = "-";
+      });
+      return;
+    }
+
     try {
       final response = await http.get(
-        Uri.parse(
-          'http://localhost:8000/api/get_route?origin_lat=$_myLat&origin_lng=$_myLng&dest_lat=${secilenKonum.latitude}&dest_lng=${secilenKonum.longitude}',
-        ),
+        Uri.parse('http://localhost:8000/api/get_route?origin_lat=$_myLat&origin_lng=$_myLng&dest_lat=${secilenKonum.latitude}&dest_lng=${secilenKonum.longitude}'),
       );
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
-          _mesafeText = data['distance'];
-          _sureText = data['duration'];
-          _hedefAdresi = data['address'];
-          final List pts = data['points'];
-          _polylines.add(
-            Polyline(
-              polylineId: const PolylineId('route'),
-              points: pts.map((p) => LatLng(p[0], p[1])).toList(),
-              color: Colors.blueAccent,
-              width: 6,
-            ),
-          );
+          _mesafeText = data['distance'] ?? "0 km";
+          _sureText = data['duration'] ?? "0 dk";
+          _hedefAdresi = data['address'] ?? "Adres bulunamadı";
+          
+          if (data['points'] != null) {
+            final List pts = data['points'];
+            _polylines.add(
+              Polyline(
+                polylineId: const PolylineId('route'),
+                points: pts.map((p) => LatLng(p[0], p[1])).toList(),
+                color: Colors.blueAccent,
+                width: 6,
+              ),
+            );
+          }
         });
+      } else {
+         setState(() => _hedefAdresi = "Rota API'ye ulaşılamadı.");
       }
     } catch (e) {
       debugPrint("Rota Hatası: $e");
+      setState(() => _hedefAdresi = "Bağlantı sorunu, rota çizilemedi.");
     }
   }
 
+  // --- DETAYLI ARAMA (MOLA VER) ---
+  void _detayliAramaDialogAc() {
+    setState(() => _haritaKilitli = true);
+    TextEditingController kategoriCtrl = TextEditingController();
+    double capKm = 5.0;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text("Mola Ver", style: TextStyle(fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: kategoriCtrl,
+                decoration: InputDecoration(
+                  labelText: "Kategori (Otel, Kafe...)",
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
+                  prefixIcon: const Icon(Icons.category),
+                ),
+              ),
+              const SizedBox(height: 25),
+              const Text("Arama Çapı (Kilometre)", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+              Slider(
+                value: capKm,
+                min: 1,
+                max: 20,
+                divisions: 19,
+                label: "${capKm.toInt()} km",
+                activeColor: Colors.purple,
+                onChanged: (val) => setDialogState(() => capKm = val),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, "iptal"),
+              child: const Text("Vazgeç", style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.purple, foregroundColor: Colors.white),
+              onPressed: () {
+                String kat = kategoriCtrl.text;
+                Navigator.pop(context, "devam");
+                if (kat.isNotEmpty) {
+                  _detayliOneriCek(kat, capKm);
+                }
+              },
+              child: const Text("Mekan Bul"),
+            ),
+          ],
+        ),
+      ),
+    ).then((durum) {
+      if (durum != "devam") setState(() => _haritaKilitli = false);
+    });
+  }
+
+  Future<void> _detayliOneriCek(String kategori, double capKm) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator(color: Colors.purple)),
+    );
+
+    try {
+      final response = await http.post(
+        Uri.parse('http://localhost:8000/api/category_recommendation'),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "category": kategori,
+          "radius_km": capKm,
+          "current_lat": _myLat ?? 39.92077, 
+          "current_lng": _myLng ?? 32.85411, 
+        }),
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        
+        if (data['status'] == 'error') {
+          setState(() => _haritaKilitli = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(data['message'] ?? "Yapay Zeka Hatası!"), backgroundColor: Colors.red)
+          );
+          return;
+        }
+
+        if (data['status'] == 'success') {
+          final LatLng mekanPos = LatLng(data['lat'], data['lng']);
+
+          // İŞTE ÇÖZÜMÜN KALBİ BURASI: Haritanın kilidini rotayı çizmeden ÖNCE aç!
+          setState(() => _haritaKilitli = false); 
+
+          // Mor pin ile rotayı çizmesini ve mesafe/süre yazılarının güncellenmesini BEKLE (await)
+          await _hedefSec(mekanPos, pinHue: BitmapDescriptor.hueViolet);
+
+          // Rota çizildikten sonra InfoWindow eklentisini yap
+          setState(() {
+            _markers.removeWhere((m) => m.markerId.value == 'hedef_pin');
+            _markers.add(
+              Marker(
+                markerId: const MarkerId('hedef_pin'), 
+                position: mekanPos,
+                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+                infoWindow: InfoWindow(title: data['mekan_adi'], snippet: data['sebep']),
+              ),
+            );
+          });
+          
+          mapController.animateCamera(CameraUpdate.newLatLngZoom(mekanPos, 14.0));
+          _oneriSonucunuGoster(data); 
+        }
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      setState(() => _haritaKilitli = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sunucu Hatası! Python açık mı?"), backgroundColor: Colors.red));
+    }
+  }
+
+  // --- HIZLI ÖNERİ ---
   void _tekliOneriDialogAc() {
     setState(() => _haritaKilitli = true);
     TextEditingController tercihCtrl = TextEditingController();
@@ -149,23 +309,16 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: const Text(
-            "Hızlı Öneri Al",
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text("Hızlı Öneri Al", style: TextStyle(fontWeight: FontWeight.bold)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: tercihCtrl,
                 decoration: InputDecoration(
-                  labelText: "Ne istersin? (Hamburger, Kebap, Döner...)",
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(15),
-                  ),
+                  labelText: "Ne istersin? (Hamburger, Kebap...)",
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
                 ),
               ),
               const SizedBox(height: 20),
@@ -206,9 +359,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => const Center(
-        child: CircularProgressIndicator(color: Colors.blueAccent),
-      ),
+      builder: (ctx) => const Center(child: CircularProgressIndicator(color: Colors.blueAccent)),
     );
 
     try {
@@ -218,96 +369,75 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
         body: jsonEncode({
           "preference": tercih,
           "time_limit_mins": dakika,
-          "current_lat": _myLat,
-          "current_lng": _myLng,
+          "current_lat": _myLat ?? 39.92077, 
+          "current_lng": _myLng ?? 32.85411, 
         }),
       );
 
       if (!mounted) return;
-      Navigator.pop(context);
+      Navigator.pop(context); 
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
-
+        
         if (data['status'] == 'error') {
           setState(() => _haritaKilitli = false);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(data['message'] ?? "Hata"),
-              backgroundColor: Colors.red,
-            ),
-          );
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(data['message'] ?? "Hata"), backgroundColor: Colors.red));
           return;
         }
 
         if (data['status'] == 'success') {
           final LatLng mekanPos = LatLng(data['lat'], data['lng']);
 
+          // KİLİDİ AÇIYORUZ
+          setState(() => _haritaKilitli = false); 
+
+          // Kırmızı pin ile rotayı çizmesini ve verileri almasını bekle
+          await _hedefSec(mekanPos, pinHue: BitmapDescriptor.hueRed);
+
           setState(() {
-            _secilenHedef = mekanPos; // YENİ: Otomatik olarak adresi de bulsun
             _markers.removeWhere((m) => m.markerId.value == 'hedef_pin');
             _markers.add(
               Marker(
-                markerId: const MarkerId(
-                  'hedef_pin',
-                ), // Onerilen mekan yerine direkt hedef pin yaptık
+                markerId: const MarkerId('hedef_pin'),
                 position: mekanPos,
-                icon: BitmapDescriptor.defaultMarkerWithHue(
-                  BitmapDescriptor.hueRed,
-                ),
-                infoWindow: InfoWindow(
-                  title: data['mekan_adi'],
-                  snippet: data['sebep'],
-                ),
+                icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+                infoWindow: InfoWindow(title: data['mekan_adi'], snippet: data['sebep']),
               ),
             );
           });
-
-          // OSRM rotasını ve adresini otomatik çeksin
-          _hedefSec(mekanPos);
-
-          mapController.animateCamera(
-            CameraUpdate.newLatLngZoom(mekanPos, 14.0),
-          );
-          _oneriSonucunuGoster(data);
+          
+          mapController.animateCamera(CameraUpdate.newLatLngZoom(mekanPos, 14.0));
+          _oneriSonucunuGoster(data); 
         }
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
       setState(() => _haritaKilitli = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Sunucu Hatası!"),
-          backgroundColor: Colors.red,
-        ),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sunucu Hatası! Python açık mı?"), backgroundColor: Colors.red));
     }
   }
 
   void _oneriSonucunuGoster(Map data) {
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
       builder: (ctx) => Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              data['mekan_adi'],
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-            ),
+            Text(data['mekan_adi'], style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
-            Text(
-              data['sebep'],
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 16),
-            ),
+            Text(data['sebep'], textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
             const SizedBox(height: 20),
             ElevatedButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () {
+                Navigator.pop(context); 
+                setState(() {
+                  _navigasyonPanelAcik = true; 
+                });
+              },
               child: const Text("Navigasyona Geç"),
             ),
           ],
@@ -316,14 +446,8 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     ).then((_) => setState(() => _haritaKilitli = false));
   }
 
-  // --- UI BUG ÇÖZÜCÜ (KURŞUN GEÇİRMEZ KALKAN) ---
-  // Bu fonksiyon içine konan hiçbir UI elementinin arkasına tıklanmasına izin vermez.
   Widget _kalkanTasarimi({required Widget child}) {
-    return Listener(
-      onPointerDown: (_) {}, // Farenin basma anını emer
-      onPointerMove: (_) {}, // Fare hareketini emer
-      onPointerUp: (_) {}, // Fareyi bırakma anını emer
-      behavior: HitTestBehavior.opaque, // Arkadaki haritayı tamamen sağır eder
+    return PointerInterceptor(
       child: child,
     );
   }
@@ -331,8 +455,10 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   @override
   Widget build(BuildContext context) {
     double screenHeight = MediaQuery.of(context).size.height;
-    bool kalkanAktif =
-        _haritaKilitli || _secilenHedef != null || _navigasyonPanelAcik;
+    double topPadding = MediaQuery.of(context).padding.top;
+    double bottomPadding = MediaQuery.of(context).padding.bottom;
+    
+    bool kalkanAktif = _haritaKilitli || _secilenHedef != null || _navigasyonPanelAcik;
 
     return SelectionArea(
       selectionControls: EmptyTextSelectionControls(),
@@ -343,13 +469,10 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
           children: [
             GoogleMap(
               onMapCreated: _onMapCreated,
-              initialCameraPosition: CameraPosition(
-                target: _center,
-                zoom: 12.0,
-              ),
+              initialCameraPosition: CameraPosition(target: _center, zoom: 12.0),
               markers: _markers,
               polylines: _polylines,
-              onTap: _hedefSec,
+              onTap: (pos) => _hedefSec(pos), // Elle tıklamalarda standart Mavi Pin atar
               myLocationEnabled: false,
               zoomControlsEnabled: false,
               mapToolbarEnabled: false,
@@ -357,76 +480,92 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
             if (kalkanAktif)
               Positioned.fill(
-                child: Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerDown: (_) {
-                    if (!_navigasyonPanelAcik) {
-                      setState(() {
-                        _secilenHedef = null;
-                        _polylines.clear();
-                        _markers.removeWhere(
-                          (m) => m.markerId.value == 'hedef_pin',
-                        );
-                        _haritaKilitli = false;
-                      });
-                    }
-                  },
-                  child: Container(color: Colors.transparent),
+                child: _kalkanTasarimi(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (!_navigasyonPanelAcik) {
+                        setState(() {
+                          _secilenHedef = null;
+                          _polylines.clear();
+                          _markers.removeWhere((m) => m.markerId.value == 'hedef_pin');
+                          _haritaKilitli = false;
+                        });
+                      }
+                    },
+                    child: Container(color: Colors.transparent),
+                  ),
                 ),
               ),
 
-            // ÜST ARAMA BARI (KALKANLI)
+            // ÜST ARAMA BARI 
             Positioned(
-              top: 50,
+              top: topPadding > 0 ? topPadding + 10 : 50,
               left: 20,
               right: 20,
               child: _kalkanTasarimi(
                 child: Row(
                   children: [
                     Expanded(
-                      child: Container(
-                        height: 55,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
+                      child: Material(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(30),
+                        elevation: 5, 
+                        shadowColor: Colors.black26,
+                        child: InkWell(
                           borderRadius: BorderRadius.circular(30),
-                          boxShadow: const [
-                            BoxShadow(color: Colors.black12, blurRadius: 15),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.menu),
-                              onPressed: () =>
-                                  _scaffoldKey.currentState?.openDrawer(),
+                          onTap: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text("Arama sayfası yakında eklenecek!"), backgroundColor: Colors.blueGrey, duration: Duration(seconds: 1)),
+                            );
+                          },
+                          child: Container(
+                            height: 55,
+                            padding: const EdgeInsets.only(right: 15),
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.menu),
+                                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                                ),
+                                const Expanded(
+                                  child: Text("Nereye gidiyoruz?", style: TextStyle(color: Colors.grey, fontSize: 16)),
+                                ),
+                                const Icon(Icons.search, color: Colors.grey),
+                              ],
                             ),
-                            const Expanded(
-                              child: Text(
-                                "Nereye gidiyoruz?",
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                            ),
-                            const Icon(Icons.search, color: Colors.grey),
-                            const SizedBox(width: 15),
-                          ],
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(width: 15),
-                    const CircleAvatar(
-                      backgroundColor: Colors.blueAccent,
-                      radius: 27,
-                      child: Icon(Icons.person, color: Colors.white),
+                    Material(
+                      shape: const CircleBorder(),
+                      elevation: 5,
+                      color: Colors.blueAccent,
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Profil sayfası yapım aşamasında!"), backgroundColor: Colors.blueAccent, duration: Duration(seconds: 1)),
+                          );
+                        },
+                        child: const SizedBox(
+                          width: 54,
+                          height: 54,
+                          child: Icon(Icons.person, color: Colors.white, size: 28),
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
             ),
 
-            // SEÇİLEN YER BİLGİ KUTUSU (KALKANLI)
+            // SEÇİLEN YER BİLGİ KUTUSU 
             if (_secilenHedef != null && !_navigasyonPanelAcik)
               Positioned(
-                bottom: 220,
+                bottom: 220 + bottomPadding,
                 left: 20,
                 right: 20,
                 child: _kalkanTasarimi(
@@ -435,12 +574,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(22),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.2),
-                          blurRadius: 25,
-                        ),
-                      ],
+                      boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 25)],
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -448,44 +582,27 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                         Text(
                           _hedefAdresi,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                            fontSize: 17,
-                            color: Colors.black87,
-                          ),
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17, color: Colors.black87),
                         ),
                         const SizedBox(height: 6),
                         Text(
                           "Mesafe: $_mesafeText | Süre: $_sureText",
-                          style: TextStyle(
-                            color: Colors.blueGrey.shade400,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
+                          style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 13, fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(height: 14),
                         SizedBox(
                           width: double.infinity,
                           height: 48,
                           child: ElevatedButton.icon(
-                            onPressed: () =>
-                                setState(() => _navigasyonPanelAcik = true),
+                            onPressed: () => setState(() => _navigasyonPanelAcik = true),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: Colors.blueAccent,
                               foregroundColor: Colors.white,
                               elevation: 5,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                             ),
                             icon: const Icon(Icons.navigation_rounded),
-                            label: const Text(
-                              "GİT",
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 1,
-                              ),
-                            ),
+                            label: const Text("GİT", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1)),
                           ),
                         ),
                       ],
@@ -494,7 +611,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                 ),
               ),
 
-            // NAVİGASYON PANELİ (KALKANLI)
+            // NAVİGASYON PANELİ 
             AnimatedPositioned(
               duration: const Duration(milliseconds: 400),
               curve: Curves.fastOutSlowIn,
@@ -503,15 +620,12 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
               right: 0,
               child: _kalkanTasarimi(
                 child: Container(
-                  height: screenHeight * 0.33,
+                  height: screenHeight * 0.33 + bottomPadding, 
+                  padding: EdgeInsets.only(bottom: bottomPadding),
                   decoration: const BoxDecoration(
                     color: Color(0xFF141414),
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(35),
-                    ),
-                    boxShadow: [
-                      BoxShadow(color: Colors.black87, blurRadius: 40),
-                    ],
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(35)),
+                    boxShadow: [BoxShadow(color: Colors.black87, blurRadius: 40)],
                   ),
                   child: Column(
                     children: [
@@ -519,25 +633,14 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                       Container(
                         width: 40,
                         height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.white24,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
+                        decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
                       ),
                       const SizedBox(height: 35),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          _navInfoCol(
-                            "KALAN SÜRE",
-                            _sureText,
-                            Colors.greenAccent,
-                          ),
-                          _navInfoCol(
-                            "TOPLAM MESAFE",
-                            _mesafeText,
-                            Colors.white,
-                          ),
+                          _navInfoCol("KALAN SÜRE", _sureText, Colors.greenAccent),
+                          _navInfoCol("TOPLAM MESAFE", _mesafeText, Colors.white),
                         ],
                       ),
                       const Spacer(),
@@ -553,22 +656,11 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                               _secilenHedef = null;
                             }),
                             style: OutlinedButton.styleFrom(
-                              side: const BorderSide(
-                                color: Colors.redAccent,
-                                width: 2,
-                              ),
+                              side: const BorderSide(color: Colors.redAccent, width: 2),
                               foregroundColor: Colors.redAccent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(18),
-                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                             ),
-                            child: const Text(
-                              "NAVİGASYONU BİTİR",
-                              style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                fontSize: 15,
-                              ),
-                            ),
+                            child: const Text("NAVİGASYONU BİTİR", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
                           ),
                         ),
                       ),
@@ -578,25 +670,31 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
               ),
             ),
 
-            // SAĞ ALT AKSİYON BUTONLARI (KALKANLI)
+            // SAĞ ALT AKSİYON BUTONLARI 
             AnimatedPositioned(
               duration: const Duration(milliseconds: 400),
               curve: Curves.fastOutSlowIn,
-              bottom: _navigasyonPanelAcik ? (screenHeight * 0.33 + 25) : 35,
+              bottom: _navigasyonPanelAcik ? (screenHeight * 0.33 + 25 + bottomPadding) : (35 + bottomPadding),
               right: 20,
               child: _kalkanTasarimi(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     FloatingActionButton.extended(
+                      heroTag: "f3",
+                      onPressed: _detayliAramaDialogAc,
+                      backgroundColor: Colors.purple,
+                      foregroundColor: Colors.white,
+                      label: const Text("Mola Ver", style: TextStyle(fontWeight: FontWeight.bold)), 
+                      icon: const Icon(Icons.manage_search),
+                    ),
+                    const SizedBox(height: 12),
+                    FloatingActionButton.extended(
                       heroTag: "f1",
                       onPressed: _tekliOneriDialogAc,
                       backgroundColor: Colors.white,
                       foregroundColor: Colors.blueAccent,
-                      label: const Text(
-                        "Öneri Al",
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
+                      label: const Text("Öneri Al", style: TextStyle(fontWeight: FontWeight.bold)),
                       icon: const Icon(Icons.explore),
                     ),
                     const SizedBox(height: 12),
@@ -605,18 +703,12 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (c) => MutualChoiceScreen(
-                            currentLat: _myLat,
-                            currentLng: _myLng,
-                          ),
+                          builder: (c) => MutualChoiceScreen(currentLat: _myLat, currentLng: _myLng),
                         ),
                       ),
                       backgroundColor: Colors.black87,
                       foregroundColor: Colors.white,
-                      label: const Text(
-                        "Ekibi Topla",
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
+                      label: const Text("Ekibi Topla", style: TextStyle(fontWeight: FontWeight.bold)),
                       icon: const Icon(Icons.auto_awesome, color: Colors.amber),
                     ),
                   ],
@@ -634,22 +726,10 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: Colors.white38,
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.5,
-          ),
+          style: const TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1.5),
         ),
         const SizedBox(height: 10),
-        Text(
-          value,
-          style: TextStyle(
-            color: valColor,
-            fontSize: 36,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
+        Text(value, style: TextStyle(color: valColor, fontSize: 36, fontWeight: FontWeight.w900)),
       ],
     );
   }
@@ -657,26 +737,11 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
 class EmptyTextSelectionControls extends MaterialTextSelectionControls {
   @override
-  Widget buildHandle(
-    BuildContext context,
-    TextSelectionHandleType type,
-    double textLineHeight, [
-    VoidCallback? onTap,
-  ]) {
+  Widget buildHandle(BuildContext context, TextSelectionHandleType type, double textLineHeight, [VoidCallback? onTap]) {
     return const SizedBox.shrink();
   }
-
   @override
-  Widget buildToolbar(
-    BuildContext context,
-    Rect globalEditableRegion,
-    double textLineHeight,
-    Offset selectionMidpoint,
-    List<TextSelectionPoint> endpoints,
-    TextSelectionDelegate delegate,
-    ValueListenable<ClipboardStatus>? clipboardStatus,
-    Offset? lastSecondaryTapDownPosition,
-  ) {
+  Widget buildToolbar(BuildContext context, Rect globalEditableRegion, double textLineHeight, Offset selectionMidpoint, List<TextSelectionPoint> endpoints, TextSelectionDelegate delegate, ValueListenable<ClipboardStatus>? clipboardStatus, Offset? lastSecondaryTapDownPosition) {
     return const SizedBox.shrink();
   }
 }
