@@ -1,11 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from typing import Dict, Any
 import requests
-import random
+import json
+import os
+import re
 import math
+from dotenv import load_dotenv
 
-app = FastAPI(title="ShouldAI API - Gerçekçi Simülasyon Modu")
+load_dotenv()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+
+app = FastAPI(title="ShouldAI API - Akıllı Esneme (Fallback) Sürümü")
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,154 +22,226 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-class SingleUserRequest(BaseModel):
-    preference: str
-    time_limit_mins: int
-    current_lat: float
-    current_lng: float
-
-
-class CategoryRequest(BaseModel):
-    category: str
-    radius_km: float
-    current_lat: float
-    current_lng: float
-
-
-# --- GERÇEK ANKARA MEKANLARI VERİ TABANI ---
-PLACES_DB = {
-    "otel": [
-        {"adi": "Sheraton Hotel & Convention Center", "puan": "4.8",
-            "ozet": "Kavaklıdere'de Ankara manzaralı, ikonik ve lüks otel.", "sebep": "Yüksek hizmet standartları ve merkezi konumu."},
-        {"adi": "JW Marriott Hotel Ankara", "puan": "4.9", "ozet": "Söğütözü'nde iş ve lüksü bir araya getiren prestijli tesis.",
-            "sebep": "Konforlu odaları ve geniş spa olanakları."},
-        {"adi": "Divan Ankara", "puan": "4.7", "ozet": "Tunalı Hilmi Caddesi'ne yürüme mesafesinde butik ve şık.",
-            "sebep": "Hem sakin hem de şehrin tam kalbinde olması."},
-        {"adi": "Point Hotel Ankara", "puan": "4.6", "ozet": "Modern mimarisiyle dikkat çeken sanat ve konaklama merkezi.",
-            "sebep": "Gelişmiş teknolojik altyapısı ve modern tasarımı."}
-    ],
-    "kafe": [
-        {"adi": "Fika Coffee House", "puan": "4.6", "ozet": "Bahçelievler'in en huzurlu 3. nesil kahvecisi.",
-            "sebep": "Nitelikli kahve çekirdekleri ve sessiz ortamı."},
-        {"adi": "Arabica Coffee House", "puan": "4.4", "ozet": "Arkadaş buluşmaları için ideal, ferah kahveci.",
-            "sebep": "Geniş oturma alanları ve zengin tatlı menüsü."},
-        {"adi": "Coffee Lab", "puan": "4.5", "ozet": "Bilgisayarla çalışmaya uygun modern kafe.",
-            "sebep": "Hızlı interneti ve odaklanmaya uygun tasarımı."},
-        {"adi": "Aylak Madam", "puan": "4.3", "ozet": "Vintage dekorasyonlu, samimi mekan.",
-            "sebep": "Sıcak atmosferi ve farklı bitki çayı çeşitleri."}
-    ],
-    "restoran": [
-        {"adi": "Trilye Restoran", "puan": "4.9", "ozet": "Ankara'nın en ünlü deniz ürünleri restoranı.",
-            "sebep": "Özel misafirlerinizi ağırlamak için eşsiz menüsü."},
-        {"adi": "Düveroğlu Kebap", "puan": "4.7", "ozet": "Efsaneleşmiş Antep mutfağı ve kebap kültürü.",
-            "sebep": "Yıllardır değişmeyen lahmacun ve et kalitesi."},
-        {"adi": "Gülçimen Aspava", "puan": "4.8", "ozet": "Sınırsız ikramlarıyla meşhur Ankara klasiği.",
-            "sebep": "Doyurucu porsiyonları ve efsanevi soslu dürümü."},
-        {"adi": "Tavacı Recep Usta", "puan": "4.6", "ozet": "Geniş ve ferah ortamıyla bilinen et lokantası.",
-            "sebep": "Fırınlanmış özel lezzetleri ve hızlı servisi."}
-    ],
-    "lokanta": [
-        {"adi": "Boğaziçi Lokantası", "puan": "4.7", "ozet": "Yarım asırlık esnaf lokantası geleneği.",
-            "sebep": "Günlük çıkan taze ev yemekleri ve meşhur Ankara tavası."},
-        {"adi": "Çiçek Lokantası", "puan": "4.5", "ozet": "Şık ve modern esnaf lokantası konsepti.",
-            "sebep": "Geniş yemek çeşitliliği ve nezih ortamı."},
-        {"adi": "Konyalı Hacıbey", "puan": "4.6", "ozet": "Etli ekmek ve fırın kebabı ustası.",
-            "sebep": "Konya mutfağını Ankara'da en iyi temsil eden yerlerden biri."}
-    ]
+ALLOWED_GOOGLE_TYPES = {
+    "restaurant", "food", "cafe", "bakery", "meal_takeaway", "meal_delivery", "bar", "pub",
+    "lodging", 
+    "gas_station" 
 }
 
-# --- AKILLI KOORDİNAT ÜRETİCİ (TRIGONOMETRİ) ---
+def calculate_real_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6371.0 
+    dlat = math.radians(lat2 - lat1)
+    dlng = math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlng / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
+def decode_google_polyline(polyline_str: str) -> list:
+    index, lat, lng = 0, 0, 0
+    coordinates = []
+    while index < len(polyline_str):
+        b, shift, result = 0, 0, 0
+        while True:
+            b = ord(polyline_str[index]) - 63
+            index += 1
+            result |= (b & 0x1f) << shift
+            shift += 5
+            if not (b & 0x20):
+                break
+        dlat = ~(result >> 1) if (result & 1) else (result >> 1)
+        lat += dlat
 
-def get_dynamic_coords(lat, lng, radius_km):
-    # Seçilen çapın %70'i ile %95'i arasında rastgele bir uzaklık belirle (Tam sınırda çıkmaması için)
-    actual_dist = radius_km * random.uniform(0.70, 0.95)
+        shift, result = 0, 0
+        while True:
+            b = ord(polyline_str[index]) - 63
+            index += 1
+            result |= (b & 0x1f) << shift
+            shift += 5
+            if not (b & 0x20):
+                break
+        dlng = ~(result >> 1) if (result & 1) else (result >> 1)
+        lng += dlng
+        coordinates.append([lat / 100000.0, lng / 100000.0])
+    return coordinates
 
-    # 0 ile 360 derece arasında rastgele bir açı seç (Haritanın her yönüne dağılması için)
-    angle = random.uniform(0, 2 * math.pi)
+def fetch_real_places_from_google(lat: float, lng: float, radius_km: float, keyword: str) -> list:
+    if not GOOGLE_MAPS_API_KEY:
+        return []
+        
+    radius_meters = int(radius_km * 1000)
+    url = f"https://maps.googleapis.com/maps/api/place/nearbysearch/json?location={lat},{lng}&radius={radius_meters}&keyword={keyword}&key={GOOGLE_MAPS_API_KEY}"
+    
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            results = response.json().get("results", [])
+            places_list = []
+            for p in results:
+                photo_ref = None
+                if p.get("photos") and len(p["photos"]) > 0:
+                    photo_ref = p["photos"][0].get("photo_reference")
 
-    # 1 km yaklaşık 0.009 derece enlem/boylam farkına eşittir
-    offset_lat = (actual_dist * 0.009) * math.cos(angle)
-    offset_lng = (actual_dist * 0.009) * math.sin(angle)
+                places_list.append({
+                    "name": p.get("name"),
+                    "rating": float(p.get("rating", 0.0)),
+                    "reviews_count": int(p.get("user_ratings_total", 0)),
+                    "lat": p.get("geometry", {}).get("location", {}).get("lat"),
+                    "lng": p.get("geometry", {}).get("location", {}).get("lng"),
+                    "address": p.get("vicinity"),
+                    "photo_reference": photo_ref,
+                    "google_types": p.get("types", [])
+                })
+            return places_list
+    except Exception as e:
+        print(f"🚨 Google Places Hatası: {e}")
+    return []
 
-    return lat + offset_lat, lng + offset_lng
+def ask_llama_to_decide(prompt: str) -> dict:
+    if not GROQ_API_KEY:
+        return {"status": "error"}
 
-
-def get_place_from_db(category_query):
-    query = category_query.lower()
-    if "otel" in query or "konaklama" in query:
-        return random.choice(PLACES_DB["otel"])
-    elif "kafe" in query or "kahve" in query or "tatlı" in query:
-        return random.choice(PLACES_DB["kafe"])
-    elif "lokanta" in query or "esnaf" in query or "çorba" in query:
-        return random.choice(PLACES_DB["lokanta"])
-    else:
-        return random.choice(PLACES_DB["restoran"])
-
-# --- 1. HIZLI ÖNERİ ---
-
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    
+    payload = {
+        "model": "llama-3.1-8b-instant",
+        "messages": [
+            {"role": "system", "content": "Sen sadece JSON döndüren bir rotalama asistanısın."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        raw_text = response.json()['choices'][0]['message']['content'].strip()
+        match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+        if match: return json.loads(match.group(0))
+        return json.loads(raw_text)
+    except:
+        return {"status": "error"}
 
 @app.post("/api/single_recommendation")
-def get_single_recommendation(request: SingleUserRequest):
-    # Zaman kısıtlamasına göre mesafeyi (çapı) ayarla
-    dist_km = 1.0 if request.time_limit_mins <= 15 else (
-        2.5 if request.time_limit_mins <= 30 else 5.0)
-
-    mekan_bilgisi = get_place_from_db(request.preference)
-    new_lat, new_lng = get_dynamic_coords(
-        request.current_lat, request.current_lng, dist_km)
-
-    return {
-        "status": "success",
-        "mekan_adi": mekan_bilgisi["adi"],
-        "puan": mekan_bilgisi["puan"],
-        "lat": new_lat,
-        "lng": new_lng,
-        "kisa_ozet": f"({request.time_limit_mins} dk limitine uygun) {mekan_bilgisi['ozet']}",
-        "sebep": mekan_bilgisi["sebep"]
-    }
-
-# --- 2. DETAYLI ARAMA ---
-
-
 @app.post("/api/category_recommendation")
-def get_category_recommendation(request: CategoryRequest):
-    mekan_bilgisi = get_place_from_db(request.category)
-    new_lat, new_lng = get_dynamic_coords(
-        request.current_lat, request.current_lng, request.radius_km)
+def get_recommendation(request: Dict[str, Any]):
+    user_input = request.get("preference", request.get("category", "Restoran")).strip()
+    rad_val = request.get("radius_km")
+    lat_val = request.get("current_lat")
+    lng_val = request.get("current_lng")
+    dest_lat = request.get("dest_lat") 
+    dest_lng = request.get("dest_lng") 
+    
+    radius_km_selection = float(rad_val) if rad_val is not None else 2.0
+    lat = float(lat_val) if lat_val is not None else 39.92077
+    lng = float(lng_val) if lng_val is not None else 32.85411
 
+    # 🚨 ÇÖZÜM 1: Çapı daraltmıyoruz, Flutter ne yolladıysa onu kullanıyoruz.
+    search_radius = 25.0 if radius_km_selection >= 50.0 else radius_km_selection 
+    google_search_keyword = "aspava" if "aspava" in user_input.lower() else user_input
+
+    raw_places = fetch_real_places_from_google(lat, lng, search_radius, google_search_keyword)
+    
+    valid_places = []
+    strict_forward_places = []
+    
+    for place in raw_places:
+        place_lat = float(place["lat"])
+        place_lng = float(place["lng"])
+        actual_distance_km = calculate_real_distance(lat, lng, place_lat, place_lng)
+        
+        if actual_distance_km <= search_radius:
+            place_tags = set(place.get("google_types", []))
+            if place_tags.intersection(ALLOWED_GOOGLE_TYPES):
+                valid_places.append(place)
+                
+                # 🚨 ÇÖZÜM 2: TERS YÖN AKILLI FİLTRESİ (Fallback destekli)
+                if dest_lat is not None and dest_lng is not None:
+                    current_to_dest = calculate_real_distance(lat, lng, float(dest_lat), float(dest_lng))
+                    place_to_dest = calculate_real_distance(place_lat, place_lng, float(dest_lat), float(dest_lng))
+                    
+                    # 1.5 km tolerans ile ileri yönde olanları ayrıca topluyoruz
+                    if place_to_dest <= (current_to_dest + 1.5):
+                        strict_forward_places.append(place)
+
+    # 🚨 EĞER ileri yönde mekan bulduysa onları kullan, BULAMADIYSA demo patlamasın diye çevredeki tüm uygunları kullan!
+    final_candidates = strict_forward_places if len(strict_forward_places) > 0 else valid_places
+
+    if not final_candidates:
+        return {"status": "error", "message": "Uygun mekan bulunamadı."}
+
+    # 100 yorum kuralı veya ilk 5
+    validated_places = [p for p in final_candidates if p.get("reviews_count", 0) >= 100]
+
+    if not validated_places:
+        final_candidates.sort(key=lambda x: x.get('reviews_count', 0), reverse=True)
+        validated_places = final_candidates[:5]
+    else:
+        validated_places.sort(key=lambda x: x.get('rating', 0.0), reverse=True)
+        validated_places = validated_places[:5]
+
+    for place in validated_places:
+        if place.get("photo_reference"):
+            place["image_url"] = f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=500&photo_reference={place['photo_reference']}&key={GOOGLE_MAPS_API_KEY}"
+        else:
+            place["image_url"] = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600"
+
+    groq_safe_list = [{"name": p["name"], "rating": p["rating"], "reviews_count": p["reviews_count"]} for p in validated_places]
+
+    prompt = f"""
+    Aranan Tür: {user_input}
+    Mekanlar Listesi: {json.dumps(groq_safe_list, ensure_ascii=False)}
+    Görev: En iyi mekanı seç. Açıklamada asla 'puanı yüksek' lafı kurma. Mekanın türüne göre mantıklı samimi 1 cümle yaz.
+    Yanıtı SADECE aşağıdaki JSON formatında ver:
+    {{"secilen_mekan_adi": "Seçilen Mekanın Adı", "sebep": "Mekan türüne tam uyan samimi açıklama cümlesi."}}
+    """
+    
+    llama_decision = ask_llama_to_decide(prompt)
+    if llama_decision.get("status") == "error":
+        return {"status": "error"}
+        
+    chosen_name = llama_decision.get("secilen_mekan_adi")
+    final_venue = next((p for p in validated_places if p["name"] == chosen_name), validated_places[0])
+    
     return {
         "status": "success",
-        "mekan_adi": mekan_bilgisi["adi"],
-        "puan": mekan_bilgisi["puan"],
-        "lat": new_lat,
-        "lng": new_lng,
-        "kisa_ozet": mekan_bilgisi["ozet"],
-        "sebep": f"Seçtiğiniz {request.radius_km} km yarıçapı içerisinde en uygun olan yer: {mekan_bilgisi['sebep']}"
+        "mekan_adi": final_venue["name"],
+        "puan": str(final_venue["rating"]),
+        "lat": final_venue["lat"],
+        "lng": final_venue["lng"],
+        "image_url": final_venue["image_url"],
+        "sebep": llama_decision.get("sebep", "Kalitesiyle öne çıkan harika bir mekan.")
     }
 
-# --- 3. NAVİGASYON (OSRM - GERÇEK ROTA) ---
+@app.post("/api/get_recommendation")
+def get_group_recommendation(request: Dict[str, Any]):
+    users = request.get("users", [])
+    lat_val = request.get("current_lat")
+    lng_val = request.get("current_lng")
+    merkez_lat = float(lat_val) if lat_val is not None else 39.92077
+    merkez_lng = float(lng_val) if lng_val is not None else 32.85411
+    
+    keyword = users[0].get("preference", "Restoran") if users else "Kafe"
+    real_places = fetch_real_places_from_google(merkez_lat, merkez_lng, 5.0, keyword)
+    users_info = "".join([f"- {u.get('name')}: Konum: {u.get('location')}, İstek: {u.get('preference')}\n" for u in users])
 
+    prompt = f"""
+    Grup Üyeleri: {users_info}
+    GERÇEK MEKANLAR: {json.dumps(real_places, ensure_ascii=False)}
+    Görev: En adil ortak noktayı seç ve JSON formatında yanıtla:
+    {{"status": "success", "mekan_adi": "Seçilen Yer", "puan": "4.5", "lat": 39.92, "lng": 32.85, "kisa_ozet": "Özet", "sebep": "Neden"}}
+    """
+    return ask_llama_to_decide(prompt)
 
 @app.get("/api/get_route")
 def get_route(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float):
-    route_url = f"http://router.project-osrm.org/route/v1/driving/{origin_lng},{origin_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson"
-    headers = {'User-Agent': 'ShouldAI_App'}
-
+    if not GOOGLE_MAPS_API_KEY: return {"status": "error"}
+    url = f"https://maps.googleapis.com/maps/api/directions/json?origin={origin_lat},{origin_lng}&destination={dest_lat},{dest_lng}&mode=driving&language=tr&key={GOOGLE_MAPS_API_KEY}"
     try:
-        route_res = requests.get(route_url).json()
-        if route_res["code"] == "Ok":
-            route = route_res["routes"][0]
-            points = [[p[1], p[0]] for p in route["geometry"]["coordinates"]]
-            return {
-                "status": "success",
-                "points": points,
-                "distance": f"{round(route['distance'] / 1000, 1)} km",
-                "duration": f"{round(route['duration'] / 60)} dk",
-                "address": "Navigasyon Rotası Çizildi"
-            }
-    except Exception as e:
-        print(f"Rota Hatası: {e}")
-
-    return {"status": "error", "distance": "0 km", "duration": "0 dk", "address": "Adres bulunamadı"}
+        response = requests.get(url)
+        data = response.json()
+        if data.get("status") == "OK":
+            route = data["routes"][0]
+            leg = route["legs"][0]
+            return {"status": "success", "points": decode_google_polyline(route["overview_polyline"]["points"]), "distance": leg["distance"]["text"], "duration": leg["duration"]["text"], "address": leg["end_address"]}
+    except: pass
+    return {"status": "error"}
