@@ -1,544 +1,286 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'dart:ui';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../group_service.dart';
+import '../location_picker.dart';
 
-class KullaniciGirdisi {
-  TextEditingController adController;
-  TextEditingController konumController;
-  TextEditingController tercihController;
-  bool araciVarMi;
-
-  KullaniciGirdisi(String ad, String konum, String tercih, this.araciVarMi)
-    : adController = TextEditingController(text: ad),
-      konumController = TextEditingController(text: konum),
-      tercihController = TextEditingController(text: tercih);
-}
-
+/// Gruptan canlı beslenen "Ekibi Topla" ekranı:
+/// - Üye sayısı kadar satır; her satırın adı gruptaki üyeden gelir.
+/// - Bir üyenin adresini SADECE o üye düzenleyebilir (enter'layınca herkese yansır).
+/// - Panel açıkken başkası güncelleme yaparsa üstte "Veriler güncel değil" uyarısı çıkar.
 class MutualChoiceScreen extends StatefulWidget {
-  // YENİ: Haritadan gelen koordinatlar
+  final String groupId;
   final double? currentLat;
   final double? currentLng;
 
-  const MutualChoiceScreen({super.key, this.currentLat, this.currentLng});
+  const MutualChoiceScreen({
+    super.key,
+    required this.groupId,
+    this.currentLat,
+    this.currentLng,
+  });
 
   @override
   State<MutualChoiceScreen> createState() => _MutualChoiceScreenState();
 }
 
+class _Uye {
+  final String userId;
+  final String ad;
+  String adres;
+  double? lat;
+  double? lng;
+  _Uye(this.userId, this.ad, this.adres, {this.lat, this.lng});
+}
+
 class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
-  String _mekanAdi = "";
-  String _puan = "";
-  String _kisaOzet = "";
-  String _sebep = "";
-  bool _yukleniyor = false;
+  static const Color _bg = Color(0xFF121212);
+  static const Color _card = Color(0xFF1E1E1E);
+  static const Color _field = Color(0xFF2A2A2A);
+  final String baseUrl = "http://localhost:8000";
 
-  final Map<String, List<String>> _ankaraKonumlari = {
-    'Çankaya': [
-      '7. Cadde (Bahçelievler)',
-      'Anıttepe',
-      'Arjantin Caddesi',
-      'Ayrancı',
-      'Bahçelievler',
-      'Balgat',
-      'Beşevler',
-      'Bilkent',
-      'Birlik Mahallesi',
-      'Cebeci',
-      'Çayyolu',
-      'Çukurambar',
-      'Demirtepe',
-      'Dikmen Vadisi',
-      'Emek',
-      'Filistin Caddesi',
-      'Gaziosmanpaşa (GOP)',
-      'Kavaklıdere',
-      'Kızılay',
-      'Konutkent',
-      'Kurtuluş',
-      'Mutluköy',
-      'Oran',
-      'Öveçler',
-      'Sancak',
-      'Söğütözü',
-      'Tunalı Hilmi',
-      'Tunus Caddesi',
-      'Ümitköy',
-      'Yaşamkent',
-      'Yıldız',
-      '100. Yıl (İşçi Blokları)',
-    ],
-    'Yenimahalle': [
-      'Batıkent Meydan',
-      'Demetevler',
-      'Ostim',
-      'Şentepe',
-      'Gazi Mahallesi',
-    ],
-    'Keçiören': ['Basınevleri', 'Etlik', 'İncirli', 'Aktepe', 'Subayevleri'],
-    'Etimesgut': ['Eryaman', 'Elvankent', 'Bağlıca', 'Göksu'],
-    'Mamak': ['Kusunlar', 'Abidinpaşa', 'Akdere', 'Boğaziçi', 'Natoyolu'],
-    'Altındağ': ['Ulus', 'Siteler', 'Hasköy', 'Hamamönü'],
-    'Gölbaşı': ['İncek', 'Mogan', 'Eymir', 'Kızılcaşar'],
-    'Pursaklar': ['Merkez', 'Saray'],
-    'Sincan': ['Merkez', 'Fatih', 'Yenikent', 'Törekent'],
-  };
+  final _db = Supabase.instance.client;
+  RealtimeChannel? _channel;
 
-  final List<KullaniciGirdisi> _kullanicilar = [
-    KullaniciGirdisi("Ahmet", "Etimesgut / Eryaman", "Suşi", false),
-    KullaniciGirdisi("Mehmet", "Çankaya / Çayyolu", "Çıtır Tavuk", true),
-    KullaniciGirdisi("Kutay", "Keçiören / Etlik", "Hot Dog", false),
-  ];
+  List<_Uye> _uyeler = [];
+  bool _loading = true;
+  bool _stale = false; // başka kullanıcı güncelleme yaptı mı?
+  bool _busy = false;
+  String _kategori = "Restoran"; // grup hangi kategoride toplanıyor
 
-  Future<void> _mekanOnerisiAl() async {
-    setState(() {
-      _yukleniyor = true;
-      _mekanAdi = "";
-      _puan = "";
-      _kisaOzet = "";
-      _sebep = "";
-    });
+  String? get _myId => _db.auth.currentUser?.id;
 
-    try {
-      List<Map<String, dynamic>> kullaniciListesi = _kullanicilar.map((k) {
-        return {
-          "name": k.adController.text,
-          "location": k.konumController.text,
-          "preference": k.tercihController.text,
-          "has_car": k.araciVarMi,
-        };
-      }).toList();
-
-      // YENİ: JSON paketine konum verilerini ekliyoruz
-      final requestBody = {
-        "users": kullaniciListesi,
-        "current_lat": widget.currentLat,
-        "current_lng": widget.currentLng,
-      };
-
-      final response = await http.post(
-        Uri.parse(
-          'http://127.0.0.1:8000/api/get_recommendation',
-        ), // Chrome Web için doğru port
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode(requestBody),
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
-        if (data['status'] == 'success') {
-          setState(() {
-            _mekanAdi = data['mekan_adi'] ?? "";
-            _puan = data['puan']?.toString() ?? "";
-            _kisaOzet = data['kisa_ozet'] ?? "";
-            _sebep = data['sebep'] ?? "Sebep belirtilmedi.";
-          });
-        } else {
-          setState(() {
-            _mekanAdi = "Sistem Hatası 🤖";
-            _sebep = data['message'] ?? "Bilinmeyen bir hata.";
-          });
-        }
-      } else {
-        setState(() => _sebep = "Sunucu Hatası: ${response.statusCode}");
-      }
-    } catch (e) {
-      setState(() => _sebep = "Bağlantı hatası: Backend açık mı?");
-    } finally {
-      setState(() => _yukleniyor = false);
-    }
-  }
-
-  void _sifirla() {
-    setState(() {
-      _mekanAdi = "";
-      _puan = "";
-      _kisaOzet = "";
-      _sebep = "";
-    });
-  }
-
-  Widget _buildRichText(String text) {
-    final List<TextSpan> spans = [];
-    final List<String> parts = text.split('**');
-
-    for (int i = 0; i < parts.length; i++) {
-      if (i % 2 == 0) {
-        spans.add(TextSpan(text: parts[i]));
-      } else {
-        spans.add(
-          TextSpan(
-            text: parts[i],
-            style: const TextStyle(fontWeight: FontWeight.w900),
-          ),
-        );
-      }
-    }
-
-    return RichText(
-      textAlign: TextAlign.center,
-      text: TextSpan(
-        style: const TextStyle(
-          fontSize: 15,
-          height: 1.5,
-          color: Colors.black87,
-          fontFamily: 'Roboto',
-        ),
-        children: spans,
-      ),
-    );
+  @override
+  void initState() {
+    super.initState();
+    _yukle();
+    _aboneOl();
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
+  void dispose() {
+    if (_channel != null) _db.removeChannel(_channel!);
+    super.dispose();
+  }
+
+  Future<void> _yukle({bool silent = false}) async {
+    if (!silent) setState(() => _loading = true);
+    try {
+      final members = await GroupService.members(widget.groupId);
+      final rows = await _db
+          .from('gather_locations')
+          .select('user_id, address, lat, lng')
+          .eq('group_id', widget.groupId);
+
+      final byUser = <String, Map<String, dynamic>>{};
+      for (final r in (rows as List)) {
+        byUser[r['user_id'].toString()] = Map<String, dynamic>.from(r);
+      }
+
+      _uyeler = members.map((m) {
+        final uid = m['user_id'].toString();
+        final row = byUser[uid];
+        return _Uye(
+          uid,
+          m['display_name']?.toString() ?? "Üye",
+          (row?['address'] ?? '').toString(),
+          lat: (row?['lat'] as num?)?.toDouble(),
+          lng: (row?['lng'] as num?)?.toDouble(),
+        );
+      }).toList();
+      _stale = false;
+    } catch (e) {
+      _snack("Veriler yüklenemedi: $e");
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  void _aboneOl() {
+    _channel = _db.channel('gather_${widget.groupId}');
+    _channel!
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'gather_locations',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'group_id',
+            value: widget.groupId,
+          ),
+          callback: (payload) {
+            final rec = payload.newRecord;
+            final uid = rec['user_id'];
+            // Kendi düzenlememiz değilse "güncel değil" uyarısı çıkar
+            if (uid != null && uid != _myId && mounted) {
+              setState(() => _stale = true);
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  // Kendi adresini haritadan (Google) seçtirir, koordinatla birlikte kaydeder
+  Future<void> _konumSec(_Uye u) async {
+    final secim = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => LocationPicker(
+        baseUrl: baseUrl,
+        biasLat: widget.currentLat ?? 39.92077,
+        biasLng: widget.currentLng ?? 32.85411,
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 430, maxHeight: 932),
-          child: Stack(
+    );
+    if (secim == null) return;
+
+    final address = secim['name']?.toString() ?? '';
+    final lat = (secim['lat'] as num?)?.toDouble();
+    final lng = (secim['lng'] as num?)?.toDouble();
+
+    try {
+      await _db.from('gather_locations').upsert({
+        'group_id': widget.groupId,
+        'user_id': _myId,
+        'address': address,
+        'lat': lat,
+        'lng': lng,
+      });
+      if (mounted) {
+        setState(() {
+          u.adres = address;
+          u.lat = lat;
+          u.lng = lng;
+        });
+      }
+      _snack("Konumun güncellendi.");
+    } catch (e) {
+      _snack("Kaydedilemedi: $e");
+    }
+  }
+
+  Future<void> _mekanOner() async {
+    // Öneri öncesi en güncel veriyi çek: ekran açıkken başkası konum
+    // girmiş olabilir; centroid TÜM üyeleri kapsasın.
+    await _yukle(silent: true);
+
+    final secili = _uyeler.where((u) => u.adres.trim().isNotEmpty).toList();
+    final users = secili
+        .map(
+          (u) => {
+            "name": u.ad,
+            "location": u.adres.trim(),
+            "preference": "",
+            "lat": u.lat,
+            "lng": u.lng,
+          },
+        )
+        .toList();
+
+    if (users.isEmpty) {
+      _snack("En az bir kişinin konumu seçilmeli.");
+      return;
+    }
+
+    setState(() => _busy = true);
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$baseUrl/api/get_recommendation'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              "users": users,
+              "category": _kategori.toLowerCase(),
+              "current_lat": widget.currentLat,
+              "current_lng": widget.currentLng,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      if (!mounted) return;
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data['status'] == 'success') {
+          _sonucGoster(data);
+        } else {
+          _snack(data['message']?.toString() ?? "Uygun mekan bulunamadı.");
+        }
+      } else {
+        _snack("Sunucu hatası: ${res.statusCode}");
+      }
+    } catch (e) {
+      _snack("Bağlantı hatası: Backend açık mı?");
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _sonucGoster(Map data) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: _card,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                color: const Color(0xFF262626),
-                child: Column(
-                  children: [
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.only(top: 20, bottom: 20),
-                      child: const Text(
-                        "Ortayı Bul",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.star_rounded, color: Colors.amber),
+                  const SizedBox(width: 4),
+                  Text(
+                    "${data['puan']} / 5.0",
+                    style: const TextStyle(
+                      color: Colors.amber,
+                      fontWeight: FontWeight.w900,
                     ),
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
-                        ),
-                        itemCount: _kullanicilar.length,
-                        itemBuilder: (context, index) {
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 20),
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF333333),
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(color: Colors.white12),
-                            ),
-                            child: Column(
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      flex: 2,
-                                      child: _buildDarkTextField(
-                                        _kullanicilar[index].adController,
-                                        "İsim",
-                                        Icons.person,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      flex: 3,
-                                      child: _buildLocationAutoComplete(index),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      flex: 3,
-                                      child: _buildDarkTextField(
-                                        _kullanicilar[index].tercihController,
-                                        "Ne İstiyor?",
-                                        Icons.fastfood,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      flex: 2,
-                                      child: GestureDetector(
-                                        onTap: () => setState(
-                                          () =>
-                                              _kullanicilar[index].araciVarMi =
-                                                  !_kullanicilar[index]
-                                                      .araciVarMi,
-                                        ),
-                                        child: Container(
-                                          height: 50,
-                                          decoration: BoxDecoration(
-                                            color:
-                                                _kullanicilar[index].araciVarMi
-                                                ? const Color(
-                                                    0xFF4285F4,
-                                                  ).withValues(alpha: 0.2)
-                                                : Colors.black26,
-                                            borderRadius: BorderRadius.circular(
-                                              16,
-                                            ),
-                                            border: Border.all(
-                                              color:
-                                                  _kullanicilar[index]
-                                                      .araciVarMi
-                                                  ? const Color(0xFF4285F4)
-                                                  : Colors.transparent,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Icon(
-                                                Icons.directions_car,
-                                                size: 20,
-                                                color:
-                                                    _kullanicilar[index]
-                                                        .araciVarMi
-                                                    ? const Color(0xFF4285F4)
-                                                    : Colors.white54,
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Text(
-                                                "Araç",
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  color:
-                                                      _kullanicilar[index]
-                                                          .araciVarMi
-                                                      ? const Color(0xFF4285F4)
-                                                      : Colors.white54,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 65,
-                        child: ElevatedButton(
-                          onPressed: _yukleniyor ? null : _mekanOnerisiAl,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF4285F4),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            elevation: 5,
-                          ),
-                          child: const Text(
-                            "Şaşırt Bizi!",
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                data['mekan_adi']?.toString() ?? "",
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-
-              if (_yukleniyor)
-                Positioned.fill(
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      child: const Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          CircularProgressIndicator(
-                            color: Color(0xFF4285F4),
-                            strokeWidth: 5,
-                          ),
-                          SizedBox(height: 30),
-                          Text(
-                            "Şartlar düşünülerek\nen uygun seçim yapılıyor...",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w500,
-                              fontStyle: FontStyle.italic,
-                              height: 1.5,
-                            ),
-                          ),
-                        ],
-                      ),
+              const SizedBox(height: 10),
+              Text(
+                data['sebep']?.toString() ?? "",
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
-                ),
-
-              if (_mekanAdi.isNotEmpty && !_yukleniyor)
-                Positioned.fill(
-                  child: Container(
-                    margin: const EdgeInsets.only(top: 80),
-                    padding: const EdgeInsets.all(24),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFF0F0F0),
-                      borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(40),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black54,
-                          blurRadius: 20,
-                          offset: Offset(0, -10),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        Container(
-                          width: 50,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade400,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        Expanded(
-                          child: SelectionArea(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                if (_puan.isNotEmpty && _puan != "-")
-                                  Container(
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.amber.shade100,
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(
-                                          Icons.star_rounded,
-                                          color: Colors.amber,
-                                          size: 16,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          _puan,
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 14,
-                                            color: Colors.black87,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                Text(
-                                  _mekanAdi,
-                                  textAlign: TextAlign.center,
-                                  style: const TextStyle(
-                                    fontSize: 28,
-                                    fontWeight: FontWeight.w900,
-                                    color: Colors.black87,
-                                    height: 1.2,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  _kisaOzet.isNotEmpty
-                                      ? _kisaOzet
-                                      : "Sizin için en uygun lokasyon!",
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.blueGrey.shade700,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                                const SizedBox(height: 30),
-                                Text(
-                                  "Detaylı Analiz",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey.shade500,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Expanded(
-                                  child: SingleChildScrollView(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(
-                                        bottom: 20.0,
-                                      ),
-                                      child: _buildRichText(_sebep),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 60,
-                          child: OutlinedButton(
-                            onPressed: _sifirla,
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.black87,
-                              side: const BorderSide(
-                                color: Colors.black26,
-                                width: 2,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                            ),
-                            child: const Text(
-                              "Yeni Arama Yap",
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                  onPressed: () {
+                    Navigator.pop(ctx); // dialog
+                    Navigator.pop(context, {
+                      'lat': data['lat'],
+                      'lng': data['lng'],
+                      'name': data['mekan_adi'],
+                    });
+                  },
+                  icon: const Icon(Icons.navigation_rounded),
+                  label: const Text(
+                    "Navigasyonda Gör",
+                    style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
+              ),
             ],
           ),
         ),
@@ -546,117 +288,244 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
     );
   }
 
-  Widget _buildLocationAutoComplete(int index) {
-    return Autocomplete<String>(
-      initialValue: TextEditingValue(
-        text: _kullanicilar[index].konumController.text,
+  void _snack(String m) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(m),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF333333),
       ),
-      optionsBuilder: (TextEditingValue textEditingValue) {
-        final String inputText = textEditingValue.text;
-        if (inputText.isEmpty) return _ankaraKonumlari.keys;
+    );
+  }
 
-        if (inputText.contains('/')) {
-          final parts = inputText.split('/');
-          final district = parts[0].trim();
-          final searchNeighborhood = parts.length > 1
-              ? parts[1].trimLeft().toLowerCase()
-              : '';
-
-          if (_ankaraKonumlari.containsKey(district)) {
-            final neighborhoods = _ankaraKonumlari[district]!;
-            if (searchNeighborhood.isEmpty) {
-              return neighborhoods.map((n) => '$district / $n');
-            } else {
-              return neighborhoods
-                  .where((n) => n.toLowerCase().contains(searchNeighborhood))
-                  .map((n) => '$district / $n');
-            }
-          } else {
-            return const Iterable<String>.empty();
-          }
-        } else {
-          final searchDistrict = inputText.trimLeft().toLowerCase();
-          return _ankaraKonumlari.keys.where(
-            (d) => d.toLowerCase().contains(searchDistrict),
-          );
-        }
-      },
-      onSelected: (String selection) {
-        if (!selection.contains('/')) {
-          _kullanicilar[index].konumController.text = '$selection / ';
-        } else {
-          _kullanicilar[index].konumController.text = selection;
-        }
-      },
-      fieldViewBuilder: (ctx, ctrl, fNode, onComplete) {
-        ctrl.addListener(
-          () => _kullanicilar[index].konumController.text = ctrl.text,
-        );
-        return _buildDarkTextField(
-          ctrl,
-          "Semt",
-          Icons.location_on,
-          focusNode: fNode,
-        );
-      },
-      optionsViewBuilder: (ctx, onSelected, opts) => Align(
-        alignment: Alignment.topLeft,
-        child: Material(
-          color: Colors.transparent,
-          child: Container(
-            width: 250,
-            margin: const EdgeInsets.only(top: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF333333),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white12),
-            ),
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              shrinkWrap: true,
-              itemCount: opts.length,
-              itemBuilder: (ctx, i) => ListTile(
-                title: Text(
-                  opts.elementAt(i),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    color: Colors.white,
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      appBar: AppBar(
+        backgroundColor: _bg,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: const Text(
+          "Ekibi Topla",
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                if (_stale) _staleBanner(),
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _uyeler.length,
+                    itemBuilder: (ctx, i) => _uyeKart(_uyeler[i]),
                   ),
                 ),
-                onTap: () => onSelected(opts.elementAt(i)),
-              ),
+                _kategoriSecici(),
+                _altButon(),
+              ],
             ),
+    );
+  }
+
+  // Grup hangi kategoride toplanacak? (yatayda ortalı Kafe/Restoran şalteri)
+  Widget _kategoriSecici() {
+    Widget secenek(String label, IconData icon) {
+      final secili = _kategori == label;
+      return GestureDetector(
+        onTap: () => setState(() => _kategori = label),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+          decoration: BoxDecoration(
+            color: secili ? Colors.blueAccent : Colors.transparent,
+            borderRadius: BorderRadius.circular(30),
           ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: secili ? Colors.white : Colors.white54,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: secili ? Colors.white : Colors.white54,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.only(top: 4),
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: _card,
+          borderRadius: BorderRadius.circular(30),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            secenek("Kafe", Icons.local_cafe),
+            secenek("Restoran", Icons.restaurant),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildDarkTextField(
-    TextEditingController ctrl,
-    String lbl,
-    IconData icon, {
-    FocusNode? focusNode,
-  }) {
-    return SizedBox(
-      height: 50,
-      child: TextField(
-        controller: ctrl,
-        focusNode: focusNode,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
-        decoration: InputDecoration(
-          hintText: lbl,
-          hintStyle: const TextStyle(color: Colors.white54, fontSize: 14),
-          prefixIcon: Icon(icon, size: 20, color: Colors.white54),
-          filled: true,
-          fillColor: Colors.black26,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 0,
+  Widget _staleBanner() {
+    return Container(
+      width: double.infinity,
+      color: Colors.amber.shade800,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              "Veriler güncel değil. Sayfayı yenilemek ister misiniz?",
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide.none,
+          TextButton(
+            onPressed: _yukle,
+            child: const Text(
+              "Yenile",
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _uyeKart(_Uye u) {
+    final benim = u.userId == _myId;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const CircleAvatar(
+                radius: 14,
+                backgroundColor: _field,
+                child: Icon(Icons.person, size: 16, color: Colors.white70),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                benim ? "${u.ad} (Sen)" : u.ad,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (!benim) ...[
+                const SizedBox(width: 8),
+                const Icon(Icons.lock_outline, size: 14, color: Colors.white38),
+              ],
+            ],
+          ),
+          const SizedBox(height: 10),
+          InkWell(
+            onTap: benim ? () => _konumSec(u) : null,
+            borderRadius: BorderRadius.circular(14),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              decoration: BoxDecoration(
+                color: _field,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.location_on_outlined, color: Colors.white54),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      u.adres.trim().isNotEmpty
+                          ? u.adres
+                          : (benim
+                                ? "Konumunu seçmek için dokun"
+                                : "Konum bekleniyor..."),
+                      style: TextStyle(
+                        color: u.adres.trim().isNotEmpty
+                            ? Colors.white
+                            : Colors.white38,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (benim)
+                    const Icon(Icons.search, color: Colors.blueAccent, size: 20)
+                  else
+                    const Icon(
+                      Icons.lock_outline,
+                      color: Colors.white24,
+                      size: 18,
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _altButon() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: SizedBox(
+          width: double.infinity,
+          height: 54,
+          child: ElevatedButton.icon(
+            onPressed: _busy ? null : _mekanOner,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueAccent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            icon: _busy
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.restaurant),
+            label: Text(
+              _busy ? "Hesaplanıyor..." : "Mekan Öner",
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+            ),
           ),
         ),
       ),
