@@ -29,7 +29,7 @@ app.add_middleware(
 
 ALLOWED_GOOGLE_TYPES = {
     "restaurant", "food", "cafe", "bakery", "meal_takeaway", "meal_delivery", "bar", "pub",
-    "lodging", "gas_station" 
+    "lodging", "gas_station"
 }
 
 def calculate_real_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -390,7 +390,7 @@ def get_recommendation(request: Dict[str, Any]):
 
     search_radius = 25.0 if radius_km_selection >= 50.0 else radius_km_selection
 
-    local_whitelist = ["lokanta", "esnaf", "kebap", "aspava", "pide", "pizza", "burger", "cafe", "kafe", "kahve", "restoran", "restaurant", "otel", "pansiyon", "opet", "shell", "petrol", "benzin", "yemek", "döner", "köfte", "çorba", "tatlı"]
+    local_whitelist = ["lokanta", "esnaf", "kebap", "aspava", "pide", "pizza", "burger", "cafe", "kafe", "kahve", "restoran", "restaurant", "otel", "pansiyon", "opet", "shell", "petrol", "benzin", "yemek", "döner", "köfte", "çorba", "tatlı", "benzinlik", "akaryakıt", "bp", "total", "lukoil", "aytemiz", "enerji"]
     is_whitelisted = any(word in user_input.lower() for word in local_whitelist)
 
     # Whitelist'te DEĞİLSE muhtemelen belirli bir isim/marka (ör. "Hatayca").
@@ -480,7 +480,21 @@ def get_recommendation(request: Dict[str, Any]):
             "message": f"{search_radius:.0f} km içinde uygun mekan bulunamadı. Yarıçapı artırmayı deneyebilirsin.",
         }
 
-    well_reviewed = [p for p in candidates if p.get("reviews_count", 0) >= 100]
+    # Dislike filtresi: kullanıcının sevmediği kategoriler hiçbir zaman önerilmez
+    if disliked_cuisines:
+        norm_disliked = [_normalize_text(d) for d in disliked_cuisines]
+        def _is_disliked(p):
+            norm_name = _normalize_text(p.get("name", ""))
+            norm_types = [_normalize_text(t) for t in p.get("google_types", [])]
+            return any(
+                nd in norm_name or any(nd in nt for nt in norm_types)
+                for nd in norm_disliked
+            )
+        filtered = [p for p in candidates if not _is_disliked(p)]
+        candidates = filtered if filtered else candidates
+
+    # 50 yorum minimumu (çok az yorum varsa güvenilirlik düşük)
+    well_reviewed = [p for p in candidates if p.get("reviews_count", 0) >= 50]
     pool = well_reviewed if well_reviewed else candidates
     pool.sort(key=lambda x: (round(x.get("rating", 0.0)), x.get("reviews_count", 0)), reverse=True)
     validated_places = pool[:5]
@@ -538,16 +552,18 @@ def get_group_recommendation(request: Dict[str, Any]):
     lats = []
     lngs = []
     users_info = ""
-    group_prefs = []  # grubun damak zevkleri (arama sorgusunu zenginleştirmek için)
+    group_prefs = []  # her üyenin bireysel tercihini listele
+    user_pref_info = []  # LLM prompt'u için isim→tercih eşleşmesi
 
-    # 1. Aşama: Herkesin Konumunu Harita Koordinatlarına Çevir
+    # 1. Aşama: Herkesin Konumunu ve Tercihini Al
     for u in users:
         name = u.get("name", "Bilinmeyen")
         loc_str = u.get("location", "")
-        pref = u.get("preference", "")
+        pref = u.get("preference", "").strip()
 
-        if pref and pref.strip() and pref.strip().lower() not in [p.lower() for p in group_prefs]:
-            group_prefs.append(pref.strip())
+        if pref and pref.lower() not in [p.lower() for p in group_prefs]:
+            group_prefs.append(pref)
+        user_pref_info.append(f"{name}: {pref}" if pref else name)
 
         # Kullanıcı haritadan tam adres seçtiyse koordinat hazır gelir (en güvenilir).
         u_lat = u.get("lat")
@@ -555,7 +571,7 @@ def get_group_recommendation(request: Dict[str, Any]):
         if u_lat is not None and u_lng is not None:
             lats.append(float(u_lat))
             lngs.append(float(u_lng))
-            users_info += f"- {name}: Konum: {loc_str}, İstek: {pref}\n"
+            users_info += f"- {name}: {loc_str}{', tercih: ' + pref if pref else ''}\n"
             continue
 
         # Koordinat yoksa adres metnini geocode etmeyi dene (yedek yol).
@@ -563,21 +579,21 @@ def get_group_recommendation(request: Dict[str, Any]):
         if coords:
             lats.append(coords[0])
             lngs.append(coords[1])
-        users_info += f"- {name}: Konum: {loc_str}, İstek: {pref}\n"
+        users_info += f"- {name}: {loc_str}{', tercih: ' + pref if pref else ''}\n"
             
     # 2. Aşama: Kusursuz Kesişim Merkezini (Centroid) Hesapla
     if len(lats) > 0:
         center_lat = sum(lats) / len(lats)
         center_lng = sum(lngs) / len(lngs)
     else:
-        # Geocode komple patlarsa, şoförün konumunu al
         center_lat = float(request.get("current_lat") or 39.92077)
         center_lng = float(request.get("current_lng") or 32.85411)
     
-    # 3. Aşama: Merkezdeki Yerleri Bul — Text Search ile (alaka), kategori + zevki sorguya kat
+    # 3. Aşama: Merkezdeki Yerleri Bul
     GROUP_RADIUS_KM = 8.0
     category = str(request.get("category") or "").strip().lower()
     base_cat = category if category in ("kafe", "restoran", "cafe", "restaurant") else "restoran kafe"
+    # Arama sorgusunda kategori + tüm bireysel tercihleri kullan
     prefs_query = " ".join(group_prefs) if group_prefs else ""
     search_query = f"{base_cat} {prefs_query}".strip()
 
@@ -632,6 +648,19 @@ def get_group_recommendation(request: Dict[str, Any]):
                 p["_max_member_km"] = 0.0
             scored.append(p)
 
+    # Dislike filtresi: kullanıcının sevmediği kategorileri havuzdan çıkar
+    group_disliked = [_normalize_text(d) for d in (request.get("disliked_cuisines") or [])]
+    if group_disliked:
+        def _grp_disliked(p):
+            nm = _normalize_text(p.get("name", ""))
+            tps = [_normalize_text(t) for t in p.get("google_types", [])]
+            return any(nd in nm or any(nd in t for t in tps) for nd in group_disliked)
+        scored = [p for p in scored if not _grp_disliked(p)] or scored
+
+    # 50 yorum minimumu — çok az yorumlu yerleri havuzdan çıkar (yedek kalmazsa tümünü kullan)
+    reviewed = [p for p in scored if p.get("reviews_count", 0) >= 50]
+    scored = reviewed if reviewed else scored
+
     # ADALET ÖNCE (minimax): en uzaktaki üyeyi en aza indiren adayları öne al;
     # eşitlikte daha dengeli (düşük spread) ve daha kaliteli olanı tercih et.
     scored.sort(key=lambda x: (
@@ -652,16 +681,27 @@ def get_group_recommendation(request: Dict[str, Any]):
     candidates = scored
     real_places = candidates  # aşağıdaki foto/seçim mantığı bu listeyi kullanıyor
     
+    # Bireysel tercihleri prompt için özetle
+    pref_summary = ""
+    if any(u.get("preference", "").strip() for u in users):
+        pref_summary = (
+            "\n    ÜYE TERCİHLERİ (herkese uyacak yer seç):\n"
+            + "\n".join(f"    - {p}" for p in user_pref_info)
+            + "\n"
+        )
+
     prompt = f"""
-    Grup Üyeleri ve İstekleri: 
+    Grup Üyeleri: 
     {users_info}
-    
+    {pref_summary}
     GERÇEK MEKANLAR (Grubun Tam Orta Noktasındaki En İyi Yerler): 
     {json.dumps(safe_places, ensure_ascii=False)}
     
-    Görev: Yukarıdaki mekanlardan, grubun konumlarına ve ortak zevkine en adil olan 1 mekanı seç.
+    Görev: Listeden 1 mekan seç. Önceliğin HERKESİN yiyebileceği, tüm bireysel tercihleri
+    karşılayan veya uzlaşma sağlayan yer olsun. Eğer birinin tercihi diğerini dışlamıyorsa
+    her ikisini de sunan mekanı tercih et.
     Yanıtı SADECE aşağıdaki JSON formatında ver, ekstra metin ekleme:
-    {{"status": "success", "mekan_adi": "Seçilen Yer (Listeden Birebir Aynı Ad)", "sebep": "Neden bu mekanın seçildiğini açıklayan samimi 1-2 cümle."}}
+    {{"status": "success", "mekan_adi": "Seçilen Yer (Listeden Birebir Aynı Ad)", "sebep": "Neden bu mekanın seçildiğini ve kimin tercihini nasıl karşıladığını açıklayan samimi 1-2 cümle."}}
     """
     
     # 🚨 4. Aşama: YAPAY ZEKA PES ETME DÖNGÜSÜ (3 KERE DENER)

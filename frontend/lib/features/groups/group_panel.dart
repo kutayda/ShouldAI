@@ -126,6 +126,51 @@ class _GroupPanelState extends State<GroupPanel> {
     }
   }
 
+  Future<void> _gruptanCik() async {
+    final onay = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _bg,
+        title: const Text(
+          "Gruptan çık?",
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          "Bu gruptan çıkmak istediğine emin misin?",
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              "Vazgeç",
+              style: TextStyle(color: Colors.white54),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              "Çık",
+              style: TextStyle(color: Color(0xFFFF6B6B)),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (onay != true) return;
+    setState(() => _busy = true);
+    try {
+      await GroupService.leave(_group!['id'].toString());
+      _codeCtrl.clear();
+      _nameCtrl.clear();
+      await _load();
+    } catch (e) {
+      _snack(_friendly(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _showCodePopup(String code) async {
     await showDialog(
       context: context,
@@ -261,6 +306,15 @@ class _GroupPanelState extends State<GroupPanel> {
                   letterSpacing: 1.2,
                 ),
               ),
+            ),
+            IconButton(
+              tooltip: "Gruptan Çık",
+              icon: const Icon(
+                Icons.logout,
+                color: Color(0xFFFF6B6B),
+                size: 20,
+              ),
+              onPressed: _busy ? null : _gruptanCik,
             ),
           ],
         ),

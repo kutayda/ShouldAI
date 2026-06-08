@@ -31,7 +31,15 @@ class _Uye {
   String adres;
   double? lat;
   double? lng;
-  _Uye(this.userId, this.ad, this.adres, {this.lat, this.lng});
+  String preference;
+  _Uye(
+    this.userId,
+    this.ad,
+    this.adres, {
+    this.lat,
+    this.lng,
+    this.preference = '',
+  });
 }
 
 class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
@@ -45,9 +53,11 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
 
   List<_Uye> _uyeler = [];
   bool _loading = true;
-  bool _stale = false; // başka kullanıcı güncelleme yaptı mı?
+  bool _stale = false;
   bool _busy = false;
-  String _kategori = "Restoran"; // grup hangi kategoride toplanıyor
+  String _kategori = "Restoran";
+  // Kişi başı yemek tercihi controller'ları (userId → controller)
+  final Map<String, TextEditingController> _prefControllers = {};
 
   String? get _myId => _db.auth.currentUser?.id;
 
@@ -61,6 +71,7 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
   @override
   void dispose() {
     if (_channel != null) _db.removeChannel(_channel!);
+    for (final c in _prefControllers.values) c.dispose();
     super.dispose();
   }
 
@@ -70,7 +81,7 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
       final members = await GroupService.members(widget.groupId);
       final rows = await _db
           .from('gather_locations')
-          .select('user_id, address, lat, lng')
+          .select()
           .eq('group_id', widget.groupId);
 
       final byUser = <String, Map<String, dynamic>>{};
@@ -78,15 +89,22 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
         byUser[r['user_id'].toString()] = Map<String, dynamic>.from(r);
       }
 
+      // Eski controller'ları temizle
+      for (final c in _prefControllers.values) c.dispose();
+      _prefControllers.clear();
+
       _uyeler = members.map((m) {
         final uid = m['user_id'].toString();
         final row = byUser[uid];
+        final pref = (row?['preference'] ?? '').toString();
+        _prefControllers[uid] = TextEditingController(text: pref);
         return _Uye(
           uid,
           m['display_name']?.toString() ?? "Üye",
           (row?['address'] ?? '').toString(),
           lat: (row?['lat'] as num?)?.toDouble(),
           lng: (row?['lng'] as num?)?.toDouble(),
+          preference: pref,
         );
       }).toList();
       _stale = false;
@@ -120,46 +138,24 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
         .subscribe();
   }
 
-  // Kendi adresini haritadan (Google) seçtirir, koordinatla birlikte kaydeder
-  Future<void> _konumSec(_Uye u) async {
-    final secim = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (_) => LocationPicker(
-        baseUrl: baseUrl,
-        biasLat: widget.currentLat ?? 39.92077,
-        biasLng: widget.currentLng ?? 32.85411,
-      ),
-    );
-    if (secim == null) return;
-
-    final address = secim['name']?.toString() ?? '';
-    final lat = (secim['lat'] as num?)?.toDouble();
-    final lng = (secim['lng'] as num?)?.toDouble();
-
+  Future<void> _preferenceKaydet(_Uye u) async {
+    final pref = _prefControllers[u.userId]?.text.trim() ?? '';
     try {
       await _db.from('gather_locations').upsert({
         'group_id': widget.groupId,
         'user_id': _myId,
-        'address': address,
-        'lat': lat,
-        'lng': lng,
+        'address': u.adres,
+        'lat': u.lat,
+        'lng': u.lng,
+        'preference': pref,
       });
-      if (mounted) {
-        setState(() {
-          u.adres = address;
-          u.lat = lat;
-          u.lng = lng;
-        });
-      }
-      _snack("Konumun güncellendi.");
+      if (mounted) setState(() => u.preference = pref);
     } catch (e) {
-      _snack("Kaydedilemedi: $e");
+      _snack("Tercih kaydedilemedi: $e");
     }
   }
 
   Future<void> _mekanOner() async {
-    // Öneri öncesi en güncel veriyi çek: ekran açıkken başkası konum
-    // girmiş olabilir; centroid TÜM üyeleri kapsasın.
     await _yukle(silent: true);
 
     final secili = _uyeler.where((u) => u.adres.trim().isNotEmpty).toList();
@@ -168,7 +164,7 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
           (u) => {
             "name": u.ad,
             "location": u.adres.trim(),
-            "preference": "",
+            "preference": u.preference,
             "lat": u.lat,
             "lng": u.lng,
           },
@@ -210,6 +206,43 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
       _snack("Bağlantı hatası: Backend açık mı?");
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // Kendi adresini haritadan (Google) seçtirir, koordinatla birlikte kaydeder
+  Future<void> _konumSec(_Uye u) async {
+    final secim = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => LocationPicker(
+        baseUrl: baseUrl,
+        biasLat: widget.currentLat ?? 39.92077,
+        biasLng: widget.currentLng ?? 32.85411,
+      ),
+    );
+    if (secim == null) return;
+
+    final address = secim['name']?.toString() ?? '';
+    final lat = (secim['lat'] as num?)?.toDouble();
+    final lng = (secim['lng'] as num?)?.toDouble();
+
+    try {
+      await _db.from('gather_locations').upsert({
+        'group_id': widget.groupId,
+        'user_id': _myId,
+        'address': address,
+        'lat': lat,
+        'lng': lng,
+      });
+      if (mounted) {
+        setState(() {
+          u.adres = address;
+          u.lat = lat;
+          u.lng = lng;
+        });
+      }
+      _snack("Konumun güncellendi.");
+    } catch (e) {
+      _snack("Kaydedilemedi: $e");
     }
   }
 
@@ -449,6 +482,49 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
               ],
             ],
           ),
+          const SizedBox(height: 8),
+          // Yemek tercihi (Restoran seçiliyken; kendi satırın düzenlenebilir)
+          if (_kategori == "Restoran")
+            TextField(
+              controller: _prefControllers[u.userId],
+              enabled: benim,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _preferenceKaydet(u),
+              decoration: InputDecoration(
+                hintText: benim
+                    ? "Yemek tercihin (ör. tavuk, vejetaryen, et)"
+                    : (u.preference.isNotEmpty
+                          ? u.preference
+                          : "Tercih girilmemiş"),
+                hintStyle: TextStyle(
+                  color: benim ? Colors.white38 : Colors.white24,
+                  fontSize: 13,
+                ),
+                prefixIcon: const Icon(
+                  Icons.restaurant_menu_outlined,
+                  color: Colors.white54,
+                  size: 18,
+                ),
+                suffixIcon: benim
+                    ? IconButton(
+                        icon: const Icon(
+                          Icons.check_circle_outline,
+                          color: Colors.blueAccent,
+                          size: 20,
+                        ),
+                        onPressed: () => _preferenceKaydet(u),
+                      )
+                    : null,
+                isDense: true,
+                filled: true,
+                fillColor: _field,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
           const SizedBox(height: 10),
           InkWell(
             onTap: benim ? () => _konumSec(u) : null,

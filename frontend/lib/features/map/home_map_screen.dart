@@ -39,7 +39,15 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   BitmapDescriptor _navArrowIcon = BitmapDescriptor.defaultMarker;
   // Her yön (6°'lik kovalar) için döndürülmüş ok ikonu önbelleği
   final Map<int, BitmapDescriptor> _arrowCache = {};
-  String? _currentGroupId; // sohbete paylaşım için güncel grup
+  String? _currentGroupId;
+
+  // Kullanıcı profil tercihleri (onboarding'den)
+  List<String> _likedCuisines = [];
+  List<String> _dislikedCuisines = [];
+
+  // Öneri Al panelinde seçili kategori + benzinlik marka hafızası
+  String _oneriKategori = 'kafe';
+  String _benzinlikMarkasi = '';
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final TextEditingController _searchCtrl = TextEditingController();
 
@@ -100,6 +108,25 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     await _ozelMaviNoktaCiz();
     await _navigasyonOkuCiz();
     await _suankiKonumaGit();
+    _profilTercihleriniYukle();
+  }
+
+  void _profilTercihleriniYukle() async {
+    try {
+      final uid = Supabase.instance.client.auth.currentUser?.id;
+      if (uid == null) return;
+      final row = await Supabase.instance.client
+          .from('profiles')
+          .select('liked_cuisines, disliked_cuisines')
+          .eq('id', uid)
+          .single();
+      if (mounted) {
+        setState(() {
+          _likedCuisines = List<String>.from(row['liked_cuisines'] ?? []);
+          _dislikedCuisines = List<String>.from(row['disliked_cuisines'] ?? []);
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _ozelMaviNoktaCiz() async {
@@ -822,13 +849,17 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
   void _modernOneriPaneliniAc() {
     setState(() => _haritaKilitli = true);
-    TextEditingController tercihCtrl = TextEditingController();
+    String localKategori = _oneriKategori;
+    TextEditingController tercihCtrl = TextEditingController(
+      text: _oneriKategori == 'benzinlik' ? _benzinlikMarkasi : '',
+    );
     double localSliderIndex = 1;
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: const Color(0xFF1E1E1E),
+      barrierColor: Colors.black.withValues(alpha: 0.78),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
       ),
@@ -869,7 +900,67 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                   "Canlı Google harita verileriyle en iyi konumu bulalım.",
                   style: TextStyle(fontSize: 14, color: Colors.white60),
                 ),
-                const SizedBox(height: 25),
+                const SizedBox(height: 20),
+
+                // Kategori seçici — Kafe / Restoran / Benzinlik
+                Center(
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2A2A2A),
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: ['kafe', 'restoran', 'benzinlik'].map((k) {
+                        final isSelected = localKategori == k;
+                        return GestureDetector(
+                          onTap: () {
+                            if (localKategori == 'benzinlik') {
+                              setState(
+                                () => _benzinlikMarkasi = tercihCtrl.text,
+                              );
+                            }
+                            if (k == 'benzinlik') {
+                              tercihCtrl.text = _benzinlikMarkasi;
+                            } else {
+                              tercihCtrl.clear();
+                            }
+                            setState(() => _oneriKategori = k);
+                            setSheetState(() => localKategori = k);
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 9,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? Colors.blueAccent
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(28),
+                            ),
+                            child: Text(
+                              {
+                                'kafe': 'Kafe',
+                                'restoran': 'Restoran',
+                                'benzinlik': 'Benzinlik',
+                              }[k]!,
+                              style: TextStyle(
+                                color: isSelected
+                                    ? Colors.white
+                                    : Colors.white54,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
 
                 TextField(
                   controller: tercihCtrl,
@@ -878,7 +969,11 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                     color: Colors.white,
                   ),
                   decoration: InputDecoration(
-                    labelText: "Ne arıyorsun? (Örn: Kahve, Kebap, Pizza)",
+                    labelText: localKategori == 'kafe'
+                        ? 'Marka veya içecek türü (ör. Starbucks, çay)'
+                        : localKategori == 'restoran'
+                        ? 'Yemek türü veya mutfak (ör. tavuk, Türk)'
+                        : 'Marka tercihi (ör. Shell, BP, Opet)',
                     labelStyle: const TextStyle(color: Colors.blueAccent),
                     filled: true,
                     fillColor: const Color(0xFF2A2A2A),
@@ -940,26 +1035,40 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                         setSheetState(() => localSliderIndex = val),
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: List.generate(_radiusLabels.length, (index) {
-                      bool isSelected = index == localSliderIndex.toInt();
-                      return Text(
-                        _radiusLabels[index].replaceAll(" km", ""),
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: isSelected
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          color: isSelected
-                              ? Colors.blueAccent
-                              : Colors.grey[400],
-                        ),
-                      );
-                    }),
-                  ),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Material Slider'da track, overlay yarıçapı (24) kadar içeriden başlar
+                    const double inset = 24.0;
+                    final double trackW = constraints.maxWidth - 2 * inset;
+                    final int count = _radiusLabels.length;
+                    return SizedBox(
+                      height: 20,
+                      child: Stack(
+                        children: List.generate(count, (i) {
+                          final double cx = inset + (i / (count - 1)) * trackW;
+                          return Positioned(
+                            left: cx - 18,
+                            width: 36,
+                            child: Center(
+                              child: Text(
+                                _radiusLabels[i].replaceAll(" km", ""),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: i == localSliderIndex.toInt()
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                  color: i == localSliderIndex.toInt()
+                                      ? Colors.blueAccent
+                                      : Colors.grey[400],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    );
+                  },
                 ),
                 const SizedBox(height: 35),
                 SizedBox(
@@ -976,18 +1085,33 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                     ),
                     onPressed: () {
                       String input = tercihCtrl.text;
+                      // Benzinlik markasını hafızada tut
+                      if (localKategori == 'benzinlik') {
+                        setState(() => _benzinlikMarkasi = input);
+                      }
+                      // Aramayı oluştur: kategori + kullanıcı detayı
+                      final aramaMetni = localKategori == 'kafe'
+                          ? (input.isNotEmpty ? input : 'kafe')
+                          : localKategori == 'benzinlik'
+                          ? (input.isNotEmpty
+                                ? '$input benzinlik'
+                                : 'benzinlik')
+                          : (input.isNotEmpty ? '$input restoran' : 'restoran');
                       double secilenMesafe =
                           _radiusValues[localSliderIndex.toInt()];
                       Navigator.pop(context);
-                      if (input.isNotEmpty) {
-                        double rLat = (_isSimulating && _simCurrentPos != null)
-                            ? _simCurrentPos!.latitude
-                            : (_myLat ?? 39.92077);
-                        double rLng = (_isSimulating && _simCurrentPos != null)
-                            ? _simCurrentPos!.longitude
-                            : (_myLng ?? 32.85411);
-                        _yapayZekaOnerisiCek(input, secilenMesafe, rLat, rLng);
-                      }
+                      double rLat = (_isSimulating && _simCurrentPos != null)
+                          ? _simCurrentPos!.latitude
+                          : (_myLat ?? 39.92077);
+                      double rLng = (_isSimulating && _simCurrentPos != null)
+                          ? _simCurrentPos!.longitude
+                          : (_myLng ?? 32.85411);
+                      _yapayZekaOnerisiCek(
+                        aramaMetni,
+                        secilenMesafe,
+                        rLat,
+                        rLng,
+                      );
                     },
                     child: const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -1036,6 +1160,8 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
               "radius_km": mesafeKm,
               "current_lat": lat,
               "current_lng": lng,
+              "liked_cuisines": _likedCuisines,
+              "disliked_cuisines": _dislikedCuisines,
             }),
           )
           .timeout(const Duration(seconds: 15));
@@ -1055,6 +1181,20 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
           return;
         }
         if (data['status'] == 'success') {
+          // Simülasyon sırasında: mekanı yeni DURAK olarak ekle (rota üzerinden geçir).
+          if (_isSimulating) {
+            final type = _oneriKategori == 'kafe'
+                ? "Kafe"
+                : _oneriKategori == 'benzinlik'
+                ? "Benzinlik"
+                : "Restoran";
+            await _triggerInstantPrompt(
+              type,
+              "Aramanıza göre yol üstünde şu mekanı buldum:",
+              Map<String, dynamic>.from(data),
+            );
+            return;
+          }
           final LatLng mekanPos = LatLng(
             double.parse(data['lat'].toString()),
             double.parse(data['lng'].toString()),
@@ -1186,6 +1326,55 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     final meta = (user?.userMetadata?['display_name'] as String?)?.trim();
     if (meta != null && meta.isNotEmpty) return meta;
     return user?.email?.split('@').first ?? "Kullanıcı";
+  }
+
+  // Rota geometrisinden bir sonraki dönüş yönergesini hesaplar (formalite navigasyon)
+  String _getNavInstruction() {
+    if (_simCurrentPath.length < 3 || _simCurrentPos == null) {
+      return "Rotanızda düz devam edin";
+    }
+    // En yakın rota noktasını bul
+    int nearestIdx = 0;
+    double minD = double.infinity;
+    for (int i = 0; i < _simCurrentPath.length; i++) {
+      final d = Geolocator.distanceBetween(
+        _simCurrentPos!.latitude,
+        _simCurrentPos!.longitude,
+        _simCurrentPath[i].latitude,
+        _simCurrentPath[i].longitude,
+      );
+      if (d < minD) {
+        minD = d;
+        nearestIdx = i;
+      }
+    }
+    // İlerideki ilk anlamlı dönüşü ara (>25° açı değişimi)
+    for (int i = nearestIdx; i < _simCurrentPath.length - 2; i++) {
+      final b1 = calculateExactBearing(
+        _simCurrentPath[i],
+        _simCurrentPath[i + 1],
+      );
+      final b2 = calculateExactBearing(
+        _simCurrentPath[i + 1],
+        _simCurrentPath[i + 2],
+      );
+      final diff = ((b2 - b1) + 360) % 360;
+      final absDiff = diff > 180 ? 360 - diff : diff;
+      if (absDiff > 25) {
+        final distM = Geolocator.distanceBetween(
+          _simCurrentPos!.latitude,
+          _simCurrentPos!.longitude,
+          _simCurrentPath[i + 1].latitude,
+          _simCurrentPath[i + 1].longitude,
+        );
+        final yon = diff <= 180 ? "sağa" : "sola";
+        final distStr = distM < 1000
+            ? "${distM.round()} m sonra"
+            : "${(distM / 1000).toStringAsFixed(1)} km sonra";
+        return "$distStr $yon dönün";
+      }
+    }
+    return "Rotanızda düz devam edin";
   }
 
   // Sağ alttaki yuvarlak grup butonundan grup panelini açar (ekran ortasında)
@@ -1372,69 +1561,88 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                     ),
                   ),
 
-                Positioned(
-                  top: topPadding > 0 ? topPadding + 10 : 50,
-                  left: 20,
-                  right: 20,
-                  child: _kalkanTasarimi(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: SmartSearchBar(
-                            controller: _searchCtrl,
-                            baseUrl: baseUrl,
-                            originLat: _myLat ?? _center.latitude,
-                            originLng: _myLng ?? _center.longitude,
-                            onMenuPressed: () =>
-                                _scaffoldKey.currentState?.openDrawer(),
-                            onPlaceSelected: (lat, lng, name) {
-                              _hedefSec(LatLng(lat, lng), customTitle: name);
-                            },
+                // Simülasyon sırasında üstte varış noktası kutusu
+                // Simülasyon sırasında yıldız butonu nav panelinin sağ üzerinde
+                if (_isSimulating && _navigasyonPanelAcik)
+                  Positioned(
+                    bottom: screenHeight * 0.36,
+                    right: 20,
+                    child: _kalkanTasarimi(
+                      child: FloatingActionButton(
+                        heroTag: "f1_sim",
+                        onPressed: _modernOneriPaneliniAc,
+                        backgroundColor: Colors.blueAccent,
+                        foregroundColor: Colors.white,
+                        shape: const CircleBorder(),
+                        child: const Icon(Icons.auto_awesome, size: 26),
+                      ),
+                    ),
+                  ),
+
+                if (!_isSimulating)
+                  Positioned(
+                    top: topPadding > 0 ? topPadding + 10 : 50,
+                    left: 20,
+                    right: 20,
+                    child: _kalkanTasarimi(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: SmartSearchBar(
+                              controller: _searchCtrl,
+                              baseUrl: baseUrl,
+                              originLat: _myLat ?? _center.latitude,
+                              originLng: _myLng ?? _center.longitude,
+                              onMenuPressed: () =>
+                                  _scaffoldKey.currentState?.openDrawer(),
+                              onPlaceSelected: (lat, lng, name) {
+                                _hedefSec(LatLng(lat, lng), customTitle: name);
+                              },
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Material(
-                          shape: const CircleBorder(),
-                          elevation: 5,
-                          color: Colors.blueAccent,
-                          child: InkWell(
-                            customBorder: const CircleBorder(),
-                            onTap: () {
-                              setState(() {
-                                _isSimulationMode = !_isSimulationMode;
-                                if (_isSimulationMode) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        "Simülasyon Modu Aktif! Rotanızı seçip Başlatın.",
+                          const SizedBox(width: 10),
+                          Material(
+                            shape: const CircleBorder(),
+                            elevation: 5,
+                            color: Colors.blueAccent,
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: () {
+                                setState(() {
+                                  _isSimulationMode = !_isSimulationMode;
+                                  if (_isSimulationMode) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          "Simülasyon Modu Aktif! Rotanızı seçip Başlatın.",
+                                        ),
+                                        backgroundColor: Colors.black87,
                                       ),
-                                      backgroundColor: Colors.black87,
-                                    ),
-                                  );
-                                } else {
-                                  _isSimulating = false;
-                                  _simTimer?.cancel();
-                                }
-                              });
-                            },
-                            child: SizedBox(
-                              width: 54,
-                              height: 54,
-                              child: Icon(
-                                _isSimulationMode
-                                    ? Icons.bug_report
-                                    : Icons.bug_report_outlined,
-                                color: Colors.white,
-                                size: 28,
+                                    );
+                                  } else {
+                                    _isSimulating = false;
+                                    _simTimer?.cancel();
+                                  }
+                                });
+                              },
+                              child: SizedBox(
+                                width: 54,
+                                height: 54,
+                                child: Icon(
+                                  _isSimulationMode
+                                      ? Icons.bug_report
+                                      : Icons.bug_report_outlined,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
 
                 if (_navigasyonPanelAcik && _currentTargetName.isNotEmpty)
                   AnimatedPositioned(
@@ -1499,6 +1707,42 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                                 ),
                               ],
                             ),
+                            // Simülasyon sırasında dönüş yönergesi (formalite navigasyon)
+                            if (_isSimulating) ...[
+                              const SizedBox(height: 12),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF1E1E1E),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.turn_right_rounded,
+                                      color: Colors.blueAccent,
+                                      size: 22,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        _getNavInstruction(),
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
