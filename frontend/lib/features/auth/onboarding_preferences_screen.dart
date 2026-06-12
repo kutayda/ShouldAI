@@ -87,11 +87,11 @@ class _OnboardingPreferencesScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: const Color(0xFF121212),
         elevation: 0,
-        foregroundColor: Colors.black87,
+        foregroundColor: Colors.white,
         title: const Text(
           "Damak Zevkin",
           style: TextStyle(fontWeight: FontWeight.w800),
@@ -104,7 +104,7 @@ class _OnboardingPreferencesScreenState
             child: Text(
               "Bir kez dokun = seviyorum · iki kez = sevmiyorum. "
               "Bunları sana daha iyi öneriler sunmak için kullanacağız.",
-              style: TextStyle(color: Colors.black54, fontSize: 13),
+              style: TextStyle(color: Colors.white60, fontSize: 13),
             ),
           ),
           Expanded(
@@ -116,11 +116,15 @@ class _OnboardingPreferencesScreenState
                 children: _cuisines.map((c) {
                   final s = _state[c] ?? 0;
                   final Color bg = s == 1
-                      ? Colors.green.shade50
-                      : (s == -1 ? Colors.red.shade50 : Colors.grey.shade100);
+                      ? const Color(0xFF1B3A2A)
+                      : (s == -1
+                            ? const Color(0xFF3A1B1B)
+                            : const Color(0xFF1E1E1E));
                   final Color border = s == 1
-                      ? Colors.green
-                      : (s == -1 ? Colors.redAccent : Colors.transparent);
+                      ? Colors.greenAccent
+                      : (s == -1
+                            ? const Color(0xFFFF6B6B)
+                            : Colors.transparent);
                   final IconData? icon = s == 1
                       ? Icons.favorite
                       : (s == -1 ? Icons.not_interested : null);
@@ -144,13 +148,18 @@ class _OnboardingPreferencesScreenState
                             Icon(
                               icon,
                               size: 16,
-                              color: s == 1 ? Colors.green : Colors.redAccent,
+                              color: s == 1
+                                  ? Colors.greenAccent
+                                  : const Color(0xFFFF6B6B),
                             ),
                             const SizedBox(width: 6),
                           ],
                           Text(
                             c,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
                           ),
                         ],
                       ),

@@ -32,6 +32,7 @@ class _Uye {
   double? lat;
   double? lng;
   String preference;
+  bool selected; // yolculuğa katılacak mı?
   _Uye(
     this.userId,
     this.ad,
@@ -39,6 +40,7 @@ class _Uye {
     this.lat,
     this.lng,
     this.preference = '',
+    this.selected = true,
   });
 }
 
@@ -58,6 +60,10 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
   String _kategori = "Restoran";
   // Kişi başı yemek tercihi controller'ları (userId → controller)
   final Map<String, TextEditingController> _prefControllers = {};
+  // "Tekrar Dene" için: bu panel oturumunda önerilenleri biriktir (ignore'la)
+  final List<String> _excluded = [];
+  // Bu oturumda konumunu yeni kaydeden kullanıcılar (onay tiki için)
+  final Set<String> _konumKaydedildi = {};
 
   String? get _myId => _db.auth.currentUser?.id;
 
@@ -151,30 +157,52 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
       });
       if (mounted) setState(() => u.preference = pref);
     } catch (e) {
-      _snack("Tercih kaydedilemedi: $e");
+      final msg = e.toString();
+      if (msg.contains('preference') && msg.contains('does not exist')) {
+        _snack(
+          "Tercih kolonu DB'de yok. Supabase'de migration'ı çalıştırıp şema önbelleğini yenile.",
+        );
+      } else {
+        _snack("Tercih kaydedilemedi: $e");
+      }
     }
   }
 
   Future<void> _mekanOner() async {
     await _yukle(silent: true);
 
-    final secili = _uyeler.where((u) => u.adres.trim().isNotEmpty).toList();
+    final secili = _uyeler
+        .where((u) => u.selected && u.adres.trim().isNotEmpty)
+        .toList();
+
+    if (secili.isEmpty) {
+      _snack("Yolculuğa katılacak en az bir kişiyi seçip konumunu girmelisin.");
+      return;
+    }
+
+    final bool restoran = _kategori == "Restoran";
+
+    // Restoran modunda boş tercih kontrolü
+    if (restoran) {
+      final eksik = secili.any((u) => u.preference.trim().isEmpty);
+      if (eksik) {
+        _snack("Tercihlerin bazıları boş, doldurup tekrar deneyin.");
+        return;
+      }
+    }
+
     final users = secili
         .map(
           (u) => {
             "name": u.ad,
             "location": u.adres.trim(),
-            "preference": u.preference,
+            // Kafe modunda yemek tercihi gönderme (aramayı kirletir)
+            "preference": restoran ? u.preference : "",
             "lat": u.lat,
             "lng": u.lng,
           },
         )
         .toList();
-
-    if (users.isEmpty) {
-      _snack("En az bir kişinin konumu seçilmeli.");
-      return;
-    }
 
     setState(() => _busy = true);
     try {
@@ -187,6 +215,7 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
               "category": _kategori.toLowerCase(),
               "current_lat": widget.currentLat,
               "current_lng": widget.currentLng,
+              "exclude": _excluded,
             }),
           )
           .timeout(const Duration(seconds: 30));
@@ -195,6 +224,8 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
       if (res.statusCode == 200) {
         final data = jsonDecode(utf8.decode(res.bodyBytes));
         if (data['status'] == 'success') {
+          final ad = data['mekan_adi']?.toString() ?? '';
+          if (ad.isNotEmpty && !_excluded.contains(ad)) _excluded.add(ad);
           _sonucGoster(data);
         } else {
           _snack(data['message']?.toString() ?? "Uygun mekan bulunamadı.");
@@ -238,6 +269,7 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
           u.adres = address;
           u.lat = lat;
           u.lng = lng;
+          _konumKaydedildi.add(u.userId);
         });
       }
       _snack("Konumun güncellendi.");
@@ -257,6 +289,13 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(ctx),
+                  child: const Icon(Icons.close, color: Colors.white54),
+                ),
+              ),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -311,6 +350,29 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
                   label: const Text(
                     "Navigasyonda Gör",
                     style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Colors.white24),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _mekanOner();
+                  },
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  label: const Text(
+                    "Tekrar Dene",
+                    style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
               ),
@@ -369,7 +431,10 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
     Widget secenek(String label, IconData icon) {
       final secili = _kategori == label;
       return GestureDetector(
-        onTap: () => setState(() => _kategori = label),
+        onTap: () => setState(() {
+          _kategori = label;
+          _excluded.clear(); // kategori değişince farklı sonuç havuzu
+        }),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 180),
           padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
@@ -469,17 +534,52 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
                 child: Icon(Icons.person, size: 16, color: Colors.white70),
               ),
               const SizedBox(width: 8),
-              Text(
-                benim ? "${u.ad} (Sen)" : u.ad,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
+              Expanded(
+                child: Text(
+                  benim ? "${u.ad} (Sen)" : u.ad,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-              if (!benim) ...[
-                const SizedBox(width: 8),
-                const Icon(Icons.lock_outline, size: 14, color: Colors.white38),
-              ],
+              if (!benim)
+                const Padding(
+                  padding: EdgeInsets.only(right: 6),
+                  child: Icon(
+                    Icons.lock_outline,
+                    size: 14,
+                    color: Colors.white38,
+                  ),
+                ),
+              // Sağ üst: yolculuğa katılım noktası (basınca içi dolar)
+              GestureDetector(
+                onTap: () => setState(() => u.selected = !u.selected),
+                child: Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: u.selected ? Colors.blueAccent : Colors.white38,
+                      width: 2,
+                    ),
+                  ),
+                  child: Center(
+                    child: u.selected
+                        ? Container(
+                            width: 12,
+                            height: 12,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.blueAccent,
+                            ),
+                          )
+                        : null,
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -490,6 +590,7 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
               enabled: benim,
               style: const TextStyle(color: Colors.white, fontSize: 13),
               textInputAction: TextInputAction.done,
+              onChanged: (_) => setState(() {}),
               onSubmitted: (_) => _preferenceKaydet(u),
               decoration: InputDecoration(
                 hintText: benim
@@ -506,16 +607,34 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
                   color: Colors.white54,
                   size: 18,
                 ),
-                suffixIcon: benim
-                    ? IconButton(
-                        icon: const Icon(
-                          Icons.check_circle_outline,
-                          color: Colors.blueAccent,
-                          size: 20,
+                // Kaydet butonu yalnızca düzenlenince (kaydedilmemiş değişiklik) görünür
+                suffixIcon:
+                    (benim &&
+                        (_prefControllers[u.userId]?.text.trim() ?? '') !=
+                            u.preference.trim())
+                    ? Padding(
+                        padding: const EdgeInsets.all(6),
+                        child: GestureDetector(
+                          onTap: () => _preferenceKaydet(u),
+                          child: Container(
+                            width: 30,
+                            decoration: BoxDecoration(
+                              color: Colors.blueAccent,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
                         ),
-                        onPressed: () => _preferenceKaydet(u),
                       )
                     : null,
+                suffixIconConstraints: const BoxConstraints(
+                  minWidth: 42,
+                  minHeight: 30,
+                ),
                 isDense: true,
                 filled: true,
                 fillColor: _field,
@@ -556,7 +675,23 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
                     ),
                   ),
                   if (benim)
-                    const Icon(Icons.search, color: Colors.blueAccent, size: 20)
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: _konumKaydedildi.contains(u.userId)
+                            ? Colors.green
+                            : Colors.blueAccent,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        _konumKaydedildi.contains(u.userId)
+                            ? Icons.check
+                            : Icons.search,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    )
                   else
                     const Icon(
                       Icons.lock_outline,

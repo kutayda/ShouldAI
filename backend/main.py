@@ -293,6 +293,57 @@ def _normalize_text(s: str) -> str:
     return "".join(ch for ch in s if ch.isalnum() or ch.isspace()).strip()
 
 
+# Mutfak etiketlerini eşleştirmek için ufak sözlük: etiketten aranacak anahtar köklere.
+_CUISINE_SYNONYMS = {
+    "kebap": ["kebap", "kebab", "ocakbasi", "izgara", "mangal"],
+    "izgara": ["izgara", "mangal", "steak"],
+    "lokanta": ["lokanta", "ev yemek", "esnaf"],
+    "pide": ["pide", "lahmacun", "pideci"],
+    "lahmacun": ["lahmacun", "pide"],
+    "doner": ["doner", "dürüm", "durum"],
+    "burger": ["burger", "hamburger"],
+    "pizza": ["pizza", "pizzeria", "pizzacı", "domino", "pizza hut", "little caesars"],
+    "italyan": ["italyan", "italian", "pizza", "pasta", "makarna"],
+    "uzakdogu": ["sushi", "asian", "uzakdogu", "noodle", "wok", "japon", "cin"],
+    "sushi": ["sushi", "japon", "asian"],
+    "deniz": ["balik", "deniz", "fish", "seafood"],
+    "tatli": ["tatli", "pastane", "patisserie", "dessert", "baklava", "kunefe", "waffle", "cikolata"],
+    "pastane": ["pastane", "patisserie", "firin", "bakery"],
+    "kahve": ["kahve", "coffee", "cafe", "kafe", "espresso", "starbucks"],
+    "cafe": ["cafe", "kafe", "coffee", "kahve"],
+    "kahvalti": ["kahvalti", "breakfast", "serpme"],
+    "cig kofte": ["cig kofte", "cigkofte", "komagene"],
+    "tavuk": ["tavuk", "chicken", "kfc", "pilic", "kanat"],
+    "vejetaryen": ["vegan", "vejetaryen", "vegetarian", "salata", "salad"],
+    "vegan": ["vegan", "vejetaryen", "salata"],
+    "sokak": ["sokak", "street", "tantuni", "kokorec", "midye"],
+}
+
+
+def _term_keywords(term: str) -> list:
+    # "Kebap / Izgara" -> ["kebap", "izgara"] + sözlükteki eş anlamlılar
+    norm = _normalize_text(term)
+    raw_tokens = [t for t in norm.replace("/", " ").split() if len(t) >= 3]
+    keys = set(raw_tokens)
+    for tok in list(raw_tokens):
+        for syn_key, syns in _CUISINE_SYNONYMS.items():
+            if tok in syn_key or syn_key in tok:
+                keys.update(_normalize_text(s) for s in syns)
+    return [k for k in keys if len(k) >= 3]
+
+
+def _cuisine_matches(terms: list, place: dict) -> bool:
+    # Bir mekan, verilen mutfak etiketlerinden HERHANGİ biriyle eşleşiyor mu?
+    name = _normalize_text(place.get("name", ""))
+    types = " ".join(_normalize_text(t) for t in place.get("google_types", []))
+    haystack = f"{name} {types}"
+    for term in terms:
+        for kw in _term_keywords(term):
+            if kw in haystack:
+                return True
+    return False
+
+
 def brand_match_score(user_query: str, place_name: str) -> float:
     # Kullanıcının yazdığı marka/isim, mekan adıyla ne kadar örtüşüyor? (0.0 - 1.0)
     q = _normalize_text(user_query)
@@ -376,6 +427,8 @@ def get_recommendation(request: Dict[str, Any]):
     # Kullanıcının kişisel damak zevki (üyelik tercih ekranından gelir; opsiyonel)
     liked_cuisines = request.get("liked_cuisines") or []
     disliked_cuisines = request.get("disliked_cuisines") or []
+    # Öneri modu: "default" (Akıllı Öneri) veya "selective" (Katı Kurallar)
+    rec_mode = str(request.get("mode") or "default").strip().lower()
     pref_clause = ""
     if liked_cuisines or disliked_cuisines:
         pref_clause = (
@@ -480,22 +533,98 @@ def get_recommendation(request: Dict[str, Any]):
             "message": f"{search_radius:.0f} km içinde uygun mekan bulunamadı. Yarıçapı artırmayı deneyebilirsin.",
         }
 
+    # YEŞİL HAVUZU GÜÇLENDİR: sevilen mutfakları DOĞRUDAN Google'da ara.
+    # (Bir pizzacının Google adı/türü "pizza" içermeyebilir; "pizza" araması yine de getirir.)
+    is_gas_search = ("benzinlik" in _normalize_text(user_input)
+                     or "akaryakit" in _normalize_text(user_input))
+    if liked_cuisines and not is_gas_search:
+        liked_query = " ".join(liked_cuisines[:4])
+        liked_raw = text_search_places(liked_query, lat, lng, search_radius)
+        existing = {_normalize_text(p.get("name", "")): p for p in candidates}
+        for place in liked_raw:
+            if place.get("lat") is None or place.get("lng") is None:
+                continue
+            pl = float(place["lat"])
+            pg = float(place["lng"])
+            d = calculate_real_distance(lat, lng, pl, pg)
+            if d > search_radius:
+                continue
+            # Navigasyon sırasında: hedeften belirgin uzaklaştıran yeri alma
+            if dest_lat is not None and dest_lng is not None:
+                c2d = calculate_real_distance(lat, lng, float(dest_lat), float(dest_lng))
+                p2d = calculate_real_distance(pl, pg, float(dest_lat), float(dest_lng))
+                if p2d > c2d + 1.0:
+                    continue
+            nm = _normalize_text(place.get("name", ""))
+            if nm in existing:
+                existing[nm]["_liked_match"] = True  # mevcut adayı yeşile çevir
+            else:
+                place["_distance_km"] = d
+                place["_liked_match"] = True
+                candidates.append(place)
+                existing[nm] = place
+
+    # "Tekrar Dene" için: daha önce önerilenleri (exclude) listeden çıkar
+    exclude_names = [_normalize_text(x) for x in (request.get("exclude") or [])]
+    if exclude_names:
+        kept = [
+            p for p in candidates
+            if _normalize_text(p.get("name", "")) not in exclude_names
+        ]
+        candidates = kept if kept else candidates
+
     # Dislike filtresi: kullanıcının sevmediği kategoriler hiçbir zaman önerilmez
     if disliked_cuisines:
-        norm_disliked = [_normalize_text(d) for d in disliked_cuisines]
-        def _is_disliked(p):
-            norm_name = _normalize_text(p.get("name", ""))
-            norm_types = [_normalize_text(t) for t in p.get("google_types", [])]
-            return any(
-                nd in norm_name or any(nd in nt for nt in norm_types)
-                for nd in norm_disliked
-            )
-        filtered = [p for p in candidates if not _is_disliked(p)]
+        filtered = [p for p in candidates if not _cuisine_matches(disliked_cuisines, p)]
         candidates = filtered if filtered else candidates
 
     # 50 yorum minimumu (çok az yorum varsa güvenilirlik düşük)
     well_reviewed = [p for p in candidates if p.get("reviews_count", 0) >= 50]
-    pool = well_reviewed if well_reviewed else candidates
+    reviewed_pool = well_reviewed if well_reviewed else candidates
+
+    # YEŞİL/GRİ SINIFLANDIRMA + MOD MANTIĞI
+    # Yeşil = kullanıcının sevdiği türle eşleşen VEYA sevilen mutfak aramasından gelen mekan.
+    fallback_note = ""
+    note_text = (
+        "Tercihlerine göre arama yaptık fakat çevrendeki mekânlar pek "
+        "başarılı görünmüyordu, o sebeple çevredeki en iyi mekânı önerdik!"
+    )
+    if liked_cuisines:
+        def _is_green(p):
+            return p.get("_liked_match", False) or _cuisine_matches(liked_cuisines, p)
+
+        greens = [p for p in reviewed_pool if _is_green(p)]
+        grays = [p for p in reviewed_pool if not _is_green(p)]
+
+        def _best_rating(lst):
+            return max((float(p.get("rating", 0.0)) for p in lst), default=0.0)
+
+        if rec_mode == "selective":
+            # Katı Kurallar: bölgede yeşil varsa puan farkına bakmadan yeşil, yoksa gri.
+            if greens:
+                chosen_pool = greens
+            else:
+                chosen_pool = grays
+                fallback_note = note_text
+        else:
+            # default (Akıllı Öneri)
+            if not greens:
+                chosen_pool = grays
+                fallback_note = note_text
+            else:
+                bg = _best_rating(greens)
+                bgr = _best_rating(grays) if grays else 0.0
+                if not grays or bg >= bgr:
+                    chosen_pool = greens  # yeşil yüksek veya eşit → yeşil
+                elif (bgr - bg) > 0.5:
+                    chosen_pool = grays  # gri, yeşilden 0.5'ten fazla yüksek → gri
+                    fallback_note = note_text
+                else:
+                    chosen_pool = greens  # fark 0.5 ve altı → yeşil
+        pool = chosen_pool if chosen_pool else reviewed_pool
+    else:
+        pool = reviewed_pool
+
     pool.sort(key=lambda x: (round(x.get("rating", 0.0)), x.get("reviews_count", 0)), reverse=True)
     validated_places = pool[:5]
 
@@ -542,6 +671,7 @@ def get_recommendation(request: Dict[str, Any]):
         "lng": final_venue["lng"],
         "image_url": final_venue["image_url"],
         "sebep": sebep or f"Aradığın '{user_input}' için öne çıkan bir seçenek burası.",
+        "fallback_note": fallback_note,
     }
 
 # 🚨 ÇÖZÜM 3: TAM ORTAYI BULAN VE PES ETMEYEN GRUP MOTORU
@@ -648,14 +778,26 @@ def get_group_recommendation(request: Dict[str, Any]):
                 p["_max_member_km"] = 0.0
             scored.append(p)
 
+    # Kategori zorlaması: kafe seçiliyse kafe-tipi, restoran seçiliyse restoran-tipi yerler
+    if category in ("kafe", "cafe"):
+        cat_types = {"cafe", "bakery", "coffee_shop"}
+        typed = [p for p in scored if cat_types & set(p.get("google_types", []))]
+        scored = typed if typed else scored
+    elif category in ("restoran", "restaurant"):
+        cat_types = {"restaurant", "food", "meal_takeaway", "meal_delivery"}
+        typed = [p for p in scored if cat_types & set(p.get("google_types", []))]
+        scored = typed if typed else scored
+
+    # "Tekrar Dene" için: daha önce önerilenleri havuzdan çıkar
+    grp_exclude = [_normalize_text(x) for x in (request.get("exclude") or [])]
+    if grp_exclude:
+        kept = [p for p in scored if _normalize_text(p.get("name", "")) not in grp_exclude]
+        scored = kept if kept else scored
+
     # Dislike filtresi: kullanıcının sevmediği kategorileri havuzdan çıkar
-    group_disliked = [_normalize_text(d) for d in (request.get("disliked_cuisines") or [])]
+    group_disliked = request.get("disliked_cuisines") or []
     if group_disliked:
-        def _grp_disliked(p):
-            nm = _normalize_text(p.get("name", ""))
-            tps = [_normalize_text(t) for t in p.get("google_types", [])]
-            return any(nd in nm or any(nd in t for t in tps) for nd in group_disliked)
-        scored = [p for p in scored if not _grp_disliked(p)] or scored
+        scored = [p for p in scored if not _cuisine_matches(group_disliked, p)] or scored
 
     # 50 yorum minimumu — çok az yorumlu yerleri havuzdan çıkar (yedek kalmazsa tümünü kullan)
     reviewed = [p for p in scored if p.get("reviews_count", 0) >= 50]
