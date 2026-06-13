@@ -535,9 +535,16 @@ def get_recommendation(request: Dict[str, Any]):
 
     # YEŞİL HAVUZU GÜÇLENDİR: sevilen mutfakları DOĞRUDAN Google'da ara.
     # (Bir pizzacının Google adı/türü "pizza" içermeyebilir; "pizza" araması yine de getirir.)
-    is_gas_search = ("benzinlik" in _normalize_text(user_input)
-                     or "akaryakit" in _normalize_text(user_input))
-    if liked_cuisines and not is_gas_search:
+    # ÖNEMLİ: Mutfak kişiselleştirmesi YALNIZCA restoran aramalarında geçerli.
+    # Kafe/benzinlik aramasında devreye girmemeli (yoksa kafe ararken kebapçı çıkar).
+    _norm_input = _normalize_text(user_input)
+    is_gas_search = ("benzinlik" in _norm_input or "akaryakit" in _norm_input)
+    is_cafe_search = ("kafe" in _norm_input or "cafe" in _norm_input)
+    is_restaurant_search = ("restoran" in _norm_input or "restaurant" in _norm_input)
+    # Mutfak (yeşil/gri) kişiselleştirmesi YALNIZCA restoran aramalarında geçerli.
+    cuisine_personalization = bool(liked_cuisines) and is_restaurant_search
+
+    if cuisine_personalization:
         liked_query = " ".join(liked_cuisines[:4])
         liked_raw = text_search_places(liked_query, lat, lng, search_radius)
         existing = {_normalize_text(p.get("name", "")): p for p in candidates}
@@ -578,6 +585,17 @@ def get_recommendation(request: Dict[str, Any]):
         filtered = [p for p in candidates if not _cuisine_matches(disliked_cuisines, p)]
         candidates = filtered if filtered else candidates
 
+    # Kategori-tipi zorlaması: kafe aranıyorsa kafe-tipi, restoran aranıyorsa
+    # restoran-tipi yerleri tut. Uygun tip yoksa havuzu bırak (en azından bir şey öner).
+    if is_cafe_search:
+        cafe_types = {"cafe", "bakery", "coffee_shop"}
+        typed = [p for p in candidates if cafe_types & set(p.get("google_types", []))]
+        candidates = typed if typed else candidates
+    elif is_restaurant_search:
+        rest_types = {"restaurant", "food", "meal_takeaway", "meal_delivery"}
+        typed = [p for p in candidates if rest_types & set(p.get("google_types", []))]
+        candidates = typed if typed else candidates
+
     # 50 yorum minimumu (çok az yorum varsa güvenilirlik düşük)
     well_reviewed = [p for p in candidates if p.get("reviews_count", 0) >= 50]
     reviewed_pool = well_reviewed if well_reviewed else candidates
@@ -589,7 +607,7 @@ def get_recommendation(request: Dict[str, Any]):
         "Tercihlerine göre arama yaptık fakat çevrendeki mekânlar pek "
         "başarılı görünmüyordu, o sebeple çevredeki en iyi mekânı önerdik!"
     )
-    if liked_cuisines:
+    if cuisine_personalization:
         def _is_green(p):
             return p.get("_liked_match", False) or _cuisine_matches(liked_cuisines, p)
 
