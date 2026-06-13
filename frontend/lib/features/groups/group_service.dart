@@ -8,16 +8,18 @@ class GroupService {
   static Future<Map<String, dynamic>> createGroup(String name) async {
     final res = await _db.rpc('create_group', params: {'p_name': name});
     // RPC tek satır döndürür (list ya da map gelebilir)
-    if (res is List && res.isNotEmpty)
+    if (res is List && res.isNotEmpty) {
       return Map<String, dynamic>.from(res.first);
+    }
     return Map<String, dynamic>.from(res as Map);
   }
 
   /// Koda göre gruba katılır, grubu döndürür.
   static Future<Map<String, dynamic>> joinByCode(String code) async {
     final res = await _db.rpc('join_group_by_code', params: {'p_code': code});
-    if (res is List && res.isNotEmpty)
+    if (res is List && res.isNotEmpty) {
       return Map<String, dynamic>.from(res.first);
+    }
     return Map<String, dynamic>.from(res as Map);
   }
 
@@ -29,7 +31,9 @@ class GroupService {
         .select('group_id')
         .eq('user_id', uid);
     final ids = (memberRows as List).map((r) => r['group_id']).toList();
-    if (ids.isEmpty) return [];
+    if (ids.isEmpty) {
+      return [];
+    }
     final groups = await _db
         .from('groups')
         .select('id, name, code, owner_id, created_at')

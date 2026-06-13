@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:geolocator/geolocator.dart';
 
 /// Haritadan/veritabanından tam adres seçtiren dialog.
 /// Seçim yapılınca {name, lat, lng} döndürür (iptalde null).
@@ -111,6 +112,45 @@ class _LocationPickerState extends State<LocationPicker> {
     }
   }
 
+  Future<void> _useCurrentLocation() async {
+    setState(() => _loading = true);
+    try {
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Konum izni verilmedi.")));
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      ).timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      Navigator.pop(context, {
+        'name': 'Mevcut Konumun',
+        'lat': pos.latitude,
+        'lng': pos.longitude,
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Konum alınamadı, izinleri kontrol et."),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -168,6 +208,32 @@ class _LocationPickerState extends State<LocationPicker> {
               ),
             ),
             const SizedBox(height: 8),
+            // En üst satır: tek dokunuşla mevcut konumu kullan
+            InkWell(
+              onTap: _useCurrentLocation,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                  horizontal: 8,
+                ),
+                child: Row(
+                  children: const [
+                    Icon(Icons.my_location, color: Colors.blueAccent),
+                    SizedBox(width: 12),
+                    Text(
+                      "Konumunuz",
+                      style: TextStyle(
+                        color: Colors.blueAccent,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const Divider(height: 1, color: Colors.white12),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 300),
               child: _preds.isEmpty
@@ -181,7 +247,7 @@ class _LocationPickerState extends State<LocationPicker> {
                   : ListView.separated(
                       shrinkWrap: true,
                       itemCount: _preds.length,
-                      separatorBuilder: (_, __) =>
+                      separatorBuilder: (_, _) =>
                           const Divider(height: 1, color: Colors.white12),
                       itemBuilder: (ctx, i) {
                         final p = _preds[i];

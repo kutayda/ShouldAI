@@ -788,6 +788,13 @@ def get_group_recommendation(request: Dict[str, Any]):
         typed = [p for p in scored if cat_types & set(p.get("google_types", []))]
         scored = typed if typed else scored
 
+    # Tercih uygunluğu: üyelerin istediği yemeklere uyan yerleri öne al.
+    # (Arama sorgusu zaten tercihleri içeriyor; burada isim/tür eşleşmesini garantiliyoruz.)
+    # Hiç uyan yoksa havuzu olduğu gibi bırakırız → en yüksek puanlı "emin" yere düşeriz.
+    if group_prefs:
+        relevant = [p for p in scored if _cuisine_matches(group_prefs, p)]
+        scored = relevant if relevant else scored
+
     # "Tekrar Dene" için: daha önce önerilenleri havuzdan çıkar
     grp_exclude = [_normalize_text(x) for x in (request.get("exclude") or [])]
     if grp_exclude:

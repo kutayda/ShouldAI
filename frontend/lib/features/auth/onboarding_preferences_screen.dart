@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../map/home_map_screen.dart';
+import 'auth_gate.dart';
 
 /// Kayıt sonrası tercih ekranı. Her mutfak/kategori için kullanıcı:
 ///   1 kez dokun -> Seviyorum (yeşil)
@@ -71,8 +71,9 @@ class _OnboardingPreferencesScreenState
           .eq('id', userId);
 
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeMapScreen()),
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const AuthGate()),
+        (route) => false,
       );
     } catch (e) {
       if (mounted) {

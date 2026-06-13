@@ -15,6 +15,8 @@ import '../groups/chat_service.dart';
 import 'nav_utils.dart';
 import 'map_icons.dart';
 import 'widgets/app_drawer.dart';
+import '../auth/auth_gate.dart';
+import '../../config.dart';
 part 'home_map_simulation.dart';
 part 'home_map_recommendation.dart';
 
@@ -35,7 +37,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   double? _myLat;
   double? _myLng;
 
-  final String baseUrl = "http://localhost:8000";
+  final String baseUrl = kBaseUrl;
 
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
@@ -198,8 +200,10 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   Future<void> _suankiKonumaGit() async {
     try {
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 5),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 5),
+        ),
       );
       setState(() {
         _myLat = position.latitude;
@@ -316,8 +320,9 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
 
           _currentTargetName =
               customTitle ?? data['address'] ?? "Seçilen Konum";
-          if (customTitle == null)
+          if (customTitle == null) {
             _hedefAdresi = data['address'] ?? "Adres bulunamadı";
+          }
 
           if (data['points'] != null) {
             final List pts = data['points'];
@@ -540,7 +545,14 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
         key: _scaffoldKey,
         drawer: AppDrawer(
           displayName: _displayName,
-          onSignOut: () => Supabase.instance.client.auth.signOut(),
+          onSignOut: () async {
+            await Supabase.instance.client.auth.signOut();
+            if (!mounted) return;
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const AuthGate()),
+              (route) => false,
+            );
+          },
         ),
         body: Container(
           decoration: _isSimulationMode
@@ -1152,7 +1164,7 @@ class EmptyTextSelectionControls extends MaterialTextSelectionControls {
   Widget buildHandle(
     BuildContext context,
     TextSelectionHandleType type,
-    double textLineHeight, [
+    double textHeight, [
     VoidCallback? onTap,
   ]) {
     return const SizedBox.shrink();

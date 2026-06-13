@@ -197,7 +197,7 @@ class _SmartSearchBarState extends State<SmartSearchBar> {
                   shrinkWrap: true,
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   itemCount: _predictions.length,
-                  separatorBuilder: (_, __) =>
+                  separatorBuilder: (_, _) =>
                       Divider(height: 1, color: Colors.grey.shade200),
                   itemBuilder: (ctx, i) {
                     final p = _predictions[i];

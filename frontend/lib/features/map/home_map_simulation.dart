@@ -7,12 +7,12 @@ extension _HMSimulation on _HomeMapScreenState {
 
     LatLng pos20 = getInterpolatedPositionAndBearing(
       _simCurrentPath,
-      20.0 / 60.0,
+      60.0 / 180.0,
       _center,
     ).position;
     LatLng pos40 = getInterpolatedPositionAndBearing(
       _simCurrentPath,
-      40.0 / 60.0,
+      120.0 / 180.0,
       _center,
     ).position;
 
@@ -109,8 +109,8 @@ extension _HMSimulation on _HomeMapScreenState {
         _mesafeText = "${(remaining * 0.08).toStringAsFixed(1)} km";
 
         if (!_travelingToStop) {
-          if (_activeDrivingTime >= 20.0 &&
-              _activeDrivingTime < 21.0 &&
+          if (_activeDrivingTime >= 60.0 &&
+              _activeDrivingTime < 61.0 &&
               !_simCafePrompted) {
             _simCafePrompted = true;
             _triggerInstantPrompt(
@@ -120,8 +120,8 @@ extension _HMSimulation on _HomeMapScreenState {
             );
             return;
           }
-          if (_activeDrivingTime >= 40.0 &&
-              _activeDrivingTime < 41.0 &&
+          if (_activeDrivingTime >= 120.0 &&
+              _activeDrivingTime < 121.0 &&
               !_simRestPrompted) {
             _simRestPrompted = true;
             _triggerInstantPrompt(
@@ -155,7 +155,7 @@ extension _HMSimulation on _HomeMapScreenState {
       _navigasyonPanelAcik = true;
       _activeDrivingTime = 0.0;
       _simSegmentElapsed = 0.0;
-      _simSegmentDuration = 60.0;
+      _simSegmentDuration = 180.0;
       _simCafePrompted = false;
       _simRestPrompted = false;
       _travelingToStop = false;
@@ -409,12 +409,20 @@ extension _HMSimulation on _HomeMapScreenState {
                         true; // sim modunu koru ki yeniden sim yoluna gitsin
                     final lat = _simCurrentPos?.latitude ?? _myLat ?? 39.92077;
                     final lng = _simCurrentPos?.longitude ?? _myLng ?? 32.85411;
-                    _yapayZekaOnerisiCek(
-                      _lastOneriArama,
-                      _lastOneriMesafe,
-                      lat,
-                      lng,
-                    );
+                    // Bu önerinin TÜRÜNE göre ara (manuel aramayı referans alma!)
+                    final q = type == "Kafe"
+                        ? "kafe"
+                        : type == "Benzinlik"
+                        ? (_benzinlikMarkasi.isNotEmpty
+                              ? "$_benzinlikMarkasi benzinlik"
+                              : "benzinlik")
+                        : "restoran";
+                    // Şu anki öneriyi hariç tut ki farklısı gelsin
+                    final ad = data['mekan_adi']?.toString() ?? '';
+                    if (ad.isNotEmpty && !_oneriExcluded.contains(ad)) {
+                      _oneriExcluded.add(ad);
+                    }
+                    _yapayZekaOnerisiCek(q, 5.0, lat, lng, isRetry: true);
                   },
                   icon: const Icon(Icons.refresh_rounded, size: 20),
                   label: const Text(
@@ -444,6 +452,7 @@ extension _HMSimulation on _HomeMapScreenState {
     );
 
     if (accepted == true) {
+      if (!mounted) return;
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -496,7 +505,7 @@ extension _HMSimulation on _HomeMapScreenState {
           );
 
           _savedMainRemainingPath = routeToFinal;
-          _savedMainRemainingDuration = 60.0 - _activeDrivingTime;
+          _savedMainRemainingDuration = 180.0 - _activeDrivingTime;
           _simCurrentPath = routeToStop;
           _simSegmentElapsed = 0.0;
           _simSegmentDuration = 10.0;

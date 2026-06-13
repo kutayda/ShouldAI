@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../../../config.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -48,7 +49,7 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
   static const Color _bg = Color(0xFF121212);
   static const Color _card = Color(0xFF1E1E1E);
   static const Color _field = Color(0xFF2A2A2A);
-  final String baseUrl = "http://localhost:8000";
+  final String baseUrl = kBaseUrl;
 
   final _db = Supabase.instance.client;
   RealtimeChannel? _channel;
@@ -77,7 +78,9 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
   @override
   void dispose() {
     if (_channel != null) _db.removeChannel(_channel!);
-    for (final c in _prefControllers.values) c.dispose();
+    for (final c in _prefControllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -96,8 +99,13 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
       }
 
       // Eski controller'ları temizle
-      for (final c in _prefControllers.values) c.dispose();
+      for (final c in _prefControllers.values) {
+        c.dispose();
+      }
       _prefControllers.clear();
+
+      // Mevcut seçim durumunu koru (yeniden yükleme sıfırlamasın)
+      final onceSecilenler = {for (final u in _uyeler) u.userId: u.selected};
 
       _uyeler = members.map((m) {
         final uid = m['user_id'].toString();
@@ -111,6 +119,7 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
           lat: (row?['lat'] as num?)?.toDouble(),
           lng: (row?['lng'] as num?)?.toDouble(),
           preference: pref,
+          selected: onceSecilenler[uid] ?? true,
         );
       }).toList();
       _stale = false;

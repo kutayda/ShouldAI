@@ -293,16 +293,17 @@ extension _HMRecommendation on _HomeMapScreenState {
     String tercih,
     double mesafeKm,
     double lat,
-    double lng,
-  ) async {
+    double lng, {
+    bool isRetry = false,
+  }) async {
     // Drawer'dan değiştirilmiş olabilecek en güncel tercihleri yükle (bayatlamayı önler)
     await _profilTercihleriniYukle();
 
-    // Yeni bir arama sorgusuysa exclude listesini sıfırla; aynıysa biriktirmeye devam et
-    if (tercih != _lastOneriArama) {
+    // Yeni bir arama sorgusuysa exclude listesini sıfırla; aynıysa/retry ise biriktir
+    if (!isRetry && tercih != _lastOneriArama) {
       _oneriExcluded.clear();
-      _lastOneriArama = tercih;
     }
+    _lastOneriArama = tercih;
     _lastOneriMesafe = mesafeKm;
 
     showDialog(
@@ -376,6 +377,7 @@ extension _HMRecommendation on _HomeMapScreenState {
             customTitle: ozelBaslik,
             showPanel: false,
           );
+          if (!mounted) return;
           _oneriSonucunuGoster(data);
         }
       }
@@ -528,6 +530,7 @@ extension _HMRecommendation on _HomeMapScreenState {
                       _lastOneriMesafe,
                       lat,
                       lng,
+                      isRetry: true,
                     );
                   },
                   icon: const Icon(Icons.refresh_rounded, size: 20),

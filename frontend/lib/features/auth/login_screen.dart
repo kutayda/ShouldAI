@@ -102,10 +102,10 @@ class _LoginScreenState extends State<LoginScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Icon(
-                  Icons.travel_explore,
-                  size: 64,
-                  color: Colors.blueAccent,
+                Image.asset(
+                  'assets/shouldailogokare.png',
+                  width: 96,
+                  height: 96,
                 ),
                 const SizedBox(height: 12),
                 const Text(
