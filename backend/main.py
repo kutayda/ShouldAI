@@ -430,7 +430,11 @@ def get_recommendation(request: Dict[str, Any]):
     # Öneri modu: "default" (Akıllı Öneri) veya "selective" (Katı Kurallar)
     rec_mode = str(request.get("mode") or "default").strip().lower()
     pref_clause = ""
-    if liked_cuisines or disliked_cuisines:
+    _pref_norm = _normalize_text(user_input)
+    _is_restaurant_pref = ("restoran" in _pref_norm or "restaurant" in _pref_norm)
+    # Damak zevki bilgisini LLM'e SADECE restoran aramalarında ver.
+    # (Kafe/benzinlik aramasında verirsek açıklamada "lahmacun tercihine uygun" gibi alakasız ifadeler çıkıyor.)
+    if _is_restaurant_pref and (liked_cuisines or disliked_cuisines):
         pref_clause = (
             f"\n    Kullanıcının SEVDİĞİ türler: {', '.join(liked_cuisines) or 'belirtilmemiş'}."
             f"\n    Kullanıcının SEVMEDİĞİ türler: {', '.join(disliked_cuisines) or 'belirtilmemiş'}."
