@@ -67,6 +67,8 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
   String _mesafeText = "0 km";
   String _sureText = "0 dk";
   String _hedefAdresi = "Adres yükleniyor...";
+  // Seyahat modu: 'driving' (araba) veya 'walking' (yaya)
+  String _travelMode = 'driving';
   LatLng? _secilenHedef;
   bool _haritaKilitli = false;
 
@@ -307,7 +309,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
       final response = await http
           .get(
             Uri.parse(
-              '$baseUrl/api/get_route?origin_lat=$_myLat&origin_lng=$_myLng&dest_lat=${secilenKonum.latitude}&dest_lng=${secilenKonum.longitude}',
+              '$baseUrl/api/get_route?origin_lat=$_myLat&origin_lng=$_myLng&dest_lat=${secilenKonum.latitude}&dest_lng=${secilenKonum.longitude}&mode=$_travelMode',
             ),
           )
           .timeout(const Duration(seconds: 10));
@@ -360,6 +362,116 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
     } catch (e) {
       debugPrint("Rota Bağlantı Hatası: $e");
     }
+  }
+
+  // Seyahat modunu değiştir (araba/yaya) ve rotayı yeniden hesapla
+  void _seyahatModunuDegistir(String mode) {
+    if (_travelMode == mode) return;
+    setState(() => _travelMode = mode);
+    _rotaYenidenHesapla();
+  }
+
+  // Aynı hedef için seçili moda göre rotayı/süreyi/mesafeyi yeniden hesapla
+  Future<void> _rotaYenidenHesapla() async {
+    final dest = _secilenHedef;
+    if (dest == null || _myLat == null || _myLng == null) return;
+    setState(() {
+      _mesafeText = "...";
+      _sureText = "...";
+    });
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+              '$baseUrl/api/get_route?origin_lat=$_myLat&origin_lng=$_myLng&dest_lat=${dest.latitude}&dest_lng=${dest.longitude}&mode=$_travelMode',
+            ),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        setState(() {
+          _mesafeText = data['distance'] ?? "0 km";
+          _sureText = data['duration'] ?? "0 dk";
+          if (data['points'] != null) {
+            final List pts = data['points'];
+            _simCurrentPath = pts
+                .map(
+                  (p) => LatLng(
+                    double.parse(p[0].toString()),
+                    double.parse(p[1].toString()),
+                  ),
+                )
+                .toList();
+            double totalDist = 0;
+            for (int i = 0; i < _simCurrentPath.length - 1; i++) {
+              totalDist += Geolocator.distanceBetween(
+                _simCurrentPath[i].latitude,
+                _simCurrentPath[i].longitude,
+                _simCurrentPath[i + 1].latitude,
+                _simCurrentPath[i + 1].longitude,
+              );
+            }
+            _totalRouteDistanceKm = totalDist / 1000.0;
+            _polylines.removeWhere((pl) => pl.polylineId.value == 'route');
+            _polylines.add(
+              Polyline(
+                polylineId: const PolylineId('route'),
+                points: _simCurrentPath,
+                color: Colors.blueAccent,
+                width: 6,
+              ),
+            );
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint("Rota yeniden hesaplama hatası: $e");
+    }
+  }
+
+  // Araba/Yaya segmentli switch'in tek butonu
+  Widget _modButonu({
+    required IconData icon,
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          margin: const EdgeInsets.all(4),
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          decoration: BoxDecoration(
+            color: selected ? Colors.blueAccent : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  icon,
+                  size: 19,
+                  color: selected ? Colors.white : Colors.black54,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: selected ? Colors.white : Colors.black54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _kalkanTasarimi({required Widget child}) {
@@ -876,7 +988,7 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                     !_navigasyonPanelAcik &&
                     !_isSimulating)
                   Positioned(
-                    bottom: 150 + bottomPadding,
+                    bottom: 190 + bottomPadding,
                     left: 20,
                     right: 20,
                     child: _kalkanTasarimi(
@@ -901,7 +1013,36 @@ class _HomeMapScreenState extends State<HomeMapScreen> {
                                 color: Colors.black87,
                               ),
                             ),
-                            const SizedBox(height: 8),
+                            const SizedBox(height: 12),
+                            // Araba / Yaya seçim switch'i (yarı genişlik, ortalı)
+                            FractionallySizedBox(
+                              widthFactor: 0.62,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFEFEFEF),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Row(
+                                  children: [
+                                    _modButonu(
+                                      icon: Icons.directions_car_rounded,
+                                      label: "Araba",
+                                      selected: _travelMode == 'driving',
+                                      onTap: () =>
+                                          _seyahatModunuDegistir('driving'),
+                                    ),
+                                    _modButonu(
+                                      icon: Icons.directions_walk_rounded,
+                                      label: "Yaya",
+                                      selected: _travelMode == 'walking',
+                                      onTap: () =>
+                                          _seyahatModunuDegistir('walking'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
                             Text(
                               "Mesafe: $_mesafeText | Süre: $_sureText",
                               style: TextStyle(

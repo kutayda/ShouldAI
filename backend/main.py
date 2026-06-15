@@ -899,16 +899,19 @@ def get_group_recommendation(request: Dict[str, Any]):
     return {"status": "error", "message": "Yapay zeka defalarca denemesine rağmen karar veremedi. Tekrar deneyin."}
 
 @app.get("/api/get_route")
-def get_route(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float):
+def get_route(origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float,
+              mode: str = "driving"):
     if not GOOGLE_MAPS_API_KEY: return {"status": "error"}
-    url = f"https://maps.googleapis.com/maps/api/directions/json?origin={origin_lat},{origin_lng}&destination={dest_lat},{dest_lng}&mode=driving&language=tr&key={GOOGLE_MAPS_API_KEY}"
+    # Yalnızca desteklenen modlar: araba (driving) veya yaya (walking).
+    travel_mode = "walking" if str(mode).strip().lower() == "walking" else "driving"
+    url = f"https://maps.googleapis.com/maps/api/directions/json?origin={origin_lat},{origin_lng}&destination={dest_lat},{dest_lng}&mode={travel_mode}&language=tr&key={GOOGLE_MAPS_API_KEY}"
     try:
         response = requests.get(url)
         data = response.json()
         if data.get("status") == "OK":
             route = data["routes"][0]
             leg = route["legs"][0]
-            return {"status": "success", "points": decode_google_polyline(route["overview_polyline"]["points"]), "distance": leg["distance"]["text"], "duration": leg["duration"]["text"], "address": leg["end_address"]}
+            return {"status": "success", "points": decode_google_polyline(route["overview_polyline"]["points"]), "distance": leg["distance"]["text"], "duration": leg["duration"]["text"], "address": leg["end_address"], "mode": travel_mode}
     except: pass
     return {"status": "error"}
 
