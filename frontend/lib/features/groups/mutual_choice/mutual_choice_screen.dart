@@ -305,6 +305,29 @@ class _MutualChoiceScreenState extends State<MutualChoiceScreen> {
                   child: const Icon(Icons.close, color: Colors.white54),
                 ),
               ),
+              if ((data['image_url']?.toString() ?? '').isNotEmpty) ...[
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.network(
+                    data['image_url'].toString(),
+                    height: 150,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (c, child, progress) => progress == null
+                        ? child
+                        : Container(
+                            height: 150,
+                            alignment: Alignment.center,
+                            child: const CircularProgressIndicator(
+                              color: Colors.blueAccent,
+                              strokeWidth: 2,
+                            ),
+                          ),
+                    errorBuilder: (c, e, s) => const SizedBox.shrink(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+              ],
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [

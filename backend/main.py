@@ -410,8 +410,8 @@ def _build_image_url(place: dict) -> str:
     #  doğrudan Image.network ile yüklenemiyor; proxy bunu çözüyor.)
     ref = place.get("photo_reference")
     if ref:
-        return f"{BACKEND_BASE_URL}/api/place_photo?photo_reference={ref}&maxwidth=600"
-    return "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=600"
+        return f"{BACKEND_BASE_URL}/api/place_photo?photo_reference={ref}&maxwidth=400"
+    return "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400"
 
 
 @app.post("/api/single_recommendation")
@@ -990,9 +990,11 @@ def place_details(place_id: str):
 # tarayıcı doğrudan yüklemeyi engelliyor. Sunucu tarafında çekip kendi (CORS açık)
 # backend'imizden bytes olarak döndürüyoruz; frontend bu URL'i Image.network ile kullanır.
 @app.get("/api/place_photo")
-def place_photo(photo_reference: str, maxwidth: int = 600):
+def place_photo(photo_reference: str, maxwidth: int = 400):
     if not GOOGLE_MAPS_API_KEY or not photo_reference:
         return Response(status_code=404)
+    # Boyutu makul sınırda tut (küçük = hızlı iner)
+    maxwidth = max(120, min(int(maxwidth), 640))
     url = "https://maps.googleapis.com/maps/api/place/photo"
     params = {
         "photo_reference": photo_reference,
@@ -1004,7 +1006,12 @@ def place_photo(photo_reference: str, maxwidth: int = 600):
         r = requests.get(url, params=params, timeout=10)
         if r.status_code == 200:
             content_type = r.headers.get("Content-Type", "image/jpeg")
-            return Response(content=r.content, media_type=content_type)
+            # Fotoğraflar değişmez → tarayıcı 1 hafta önbelleğe alsın (tekrar açılışlar anında)
+            return Response(
+                content=r.content,
+                media_type=content_type,
+                headers={"Cache-Control": "public, max-age=604800, immutable"},
+            )
         print(f"🚨 place_photo beklenmedik kod: {r.status_code}")
     except Exception as e:
         print(f"🚨 place_photo ağ hatası: {e}")
